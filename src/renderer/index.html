@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+    />
+    <title>SAP → FBR Digital Invoicing</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot" id="envDot"></span>
+        <h1>SAP → FBR Digital Invoicing</h1>
+      </div>
+      <div class="topbar-right">
+        <span id="envBadge" class="badge badge-sandbox">sandbox</span>
+        <button id="btnTestSap" class="btn btn-ghost">Test SAP</button>
+        <button id="btnTestFbr" class="btn btn-ghost">Test FBR</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="invoices">Invoices</button>
+      <button class="tab" data-tab="settings">Settings</button>
+      <button class="tab" data-tab="audit">Audit log</button>
+      <button class="tab" data-tab="tools">Tools</button>
+    </nav>
+
+    <main>
+      <!-- ------------------------------------------------------ INVOICES -->
+      <section id="tab-invoices" class="tabpanel active">
+        <div class="toolbar">
+          <label>From <input type="date" id="fromDate" /></label>
+          <label>To <input type="date" id="toDate" /></label>
+          <label class="check">
+            <input type="checkbox" id="includeRegistered" /> Show already registered
+          </label>
+          <button id="btnRefresh" class="btn btn-primary">Refresh</button>
+          <span class="spacer"></span>
+          <button id="btnValidateSel" class="btn">Validate selected</button>
+          <button id="btnSubmitSel" class="btn btn-accent">Register selected with FBR</button>
+        </div>
+
+        <div id="alertBar" class="alert hidden"></div>
+
+        <div class="table-wrap">
+          <table id="invoiceTable">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="selectAll" /></th>
+                <th>Doc no.</th>
+                <th>Date</th>
+                <th>Customer</th>
+                <th class="num">Total</th>
+                <th class="num">Sales tax</th>
+                <th>FBR status</th>
+                <th>FBR invoice no.</th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="invoiceBody">
+              <tr class="empty">
+                <td colspan="9">Set up the connection under Settings, then press Refresh.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------ SETTINGS -->
+      <section id="tab-settings" class="tabpanel">
+        <div class="grid2">
+          <fieldset>
+            <legend>SAP Service Layer</legend>
+            <label>Base URL<input id="sap_baseUrl" placeholder="https://10.0.1.55:50000" /></label>
+            <label>Company database<input id="sap_companyDB" placeholder="SBODEMOPK" /></label>
+            <label>User name<input id="sap_username" placeholder="manager" /></label>
+            <label>Password<input id="sap_password" type="password" placeholder="••••••••" /></label>
+            <label class="check">
+              <input type="checkbox" id="sap_allowSelfSigned" />
+              Accept the server's self-signed certificate
+            </label>
+            <p class="hint">
+              Service Layer normally listens on port 50000 with a self-signed certificate. Leave the
+              box ticked unless you have installed a trusted certificate.
+            </p>
+          </fieldset>
+
+          <fieldset>
+            <legend>FBR Digital Invoicing</legend>
+            <label>
+              Environment
+              <select id="fbr_environment">
+                <option value="sandbox">Sandbox</option>
+                <option value="production">Production (live filings)</option>
+              </select>
+            </label>
+            <label>Sandbox token<input id="fbr_sandboxToken" type="password" /></label>
+            <label>Production token<input id="fbr_productionToken" type="password" /></label>
+            <p class="hint">
+              Tokens are issued from the IRIS portal and are valid for five years. They are stored
+              encrypted with Windows DPAPI via Electron safeStorage.
+            </p>
+            <p class="hint warn" id="encWarn" hidden>
+              Encryption is unavailable on this machine, so credentials are kept in memory only and
+              must be re-entered each run.
+            </p>
+          </fieldset>
+
+          <fieldset>
+            <legend>Seller (your company, as registered with FBR)</legend>
+            <label>NTN / CNIC<input id="seller_ntnCnic" placeholder="0786909" /></label>
+            <label>Business name<input id="seller_businessName" /></label>
+            <label>
+              Province
+              <select id="seller_province">
+                <option value="">— select —</option>
+                <option>Punjab</option>
+                <option>Sindh</option>
+                <option>Khyber Pakhtunkhwa</option>
+                <option>Balochistan</option>
+                <option>Capital Territory</option>
+                <option>Gilgit Baltistan</option>
+                <option>Azad Jammu and Kashmir</option>
+              </select>
+            </label>
+            <label>Address<input id="seller_address" /></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Mapping defaults</legend>
+            <label>
+              Default scenario ID (sandbox only)
+              <select id="map_defaultScenarioId"></select>
+            </label>
+            <label>Default sale type<input id="map_defaultSaleType" /></label>
+            <label>Default unit of measure<input id="map_defaultUom" placeholder="Numbers, pieces, units" /></label>
+            <label>Default HS code<input id="map_defaultHsCode" placeholder="0101.2100" /></label>
+            <label class="check">
+              <input type="checkbox" id="sync_validateBeforePost" />
+              Run FBR validation before registering
+            </label>
+            <label class="check">
+              <input type="checkbox" id="sync_autoWriteBack" />
+              Write the FBR number back to SAP automatically
+            </label>
+            <label>Look back (days)<input id="sync_lookbackDays" type="number" min="1" max="365" /></label>
+          </fieldset>
+
+          <fieldset class="span2">
+            <legend>SAP user-defined field names</legend>
+            <p class="hint">
+              These must match the UDFs created in SAP. See
+              <code>scripts/sap-udf-setup.md</code> for the exact definitions.
+            </p>
+            <div class="grid3">
+              <label>Invoice — FBR number<input id="f_irnField" /></label>
+              <label>Invoice — status<input id="f_statusField" /></label>
+              <label>Invoice — date<input id="f_dateField" /></label>
+              <label>Invoice — message<input id="f_messageField" /></label>
+              <label>Invoice — scenario ID<input id="f_scenarioField" /></label>
+              <label>Invoice — reference no.<input id="f_refNoField" /></label>
+              <label>BP — NTN/CNIC<input id="f_bpNtnField" /></label>
+              <label>BP — province<input id="f_bpProvinceField" /></label>
+              <label>BP — registration type<input id="f_bpRegTypeField" /></label>
+              <label>Item — HS code<input id="f_itemHsCodeField" /></label>
+              <label>Item — UoM<input id="f_itemUomField" /></label>
+              <label>Item — sale type<input id="f_itemSaleTypeField" /></label>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="actions-row">
+          <button id="btnSaveSettings" class="btn btn-primary">Save settings</button>
+          <span id="settingsStatus" class="muted"></span>
+        </div>
+      </section>
+
+      <!-- --------------------------------------------------------- AUDIT -->
+      <section id="tab-audit" class="tabpanel">
+        <div class="toolbar">
+          <button id="btnLoadAudit" class="btn btn-primary">Reload</button>
+          <button id="btnRepair" class="btn btn-accent">Repair pending write-backs</button>
+          <button id="btnExportAudit" class="btn">Export log…</button>
+          <button id="btnOpenData" class="btn btn-ghost">Open data folder</button>
+        </div>
+        <div id="auditAlerts"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Doc no.</th>
+                <th>Env</th>
+                <th>FBR invoice no.</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody id="auditBody">
+              <tr class="empty"><td colspan="6">No submissions recorded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- --------------------------------------------------------- TOOLS -->
+      <section id="tab-tools" class="tabpanel">
+        <div class="grid2">
+          <fieldset>
+            <legend>FBR reference data</legend>
+            <div class="toolbar wrap">
+              <button class="btn ref" data-ref="provinces">Provinces</button>
+              <button class="btn ref" data-ref="uom">Units of measure</button>
+              <button class="btn ref" data-ref="docTypes">Document types</button>
+              <button class="btn ref" data-ref="transTypes">Transaction types</button>
+            </div>
+            <label>HS code → valid UoM<input id="ref_hsCode" placeholder="5904.9000" /></label>
+            <button class="btn" id="btnHsUom">Look up HS code</button>
+            <label>Registration no. → status<input id="ref_regNo" placeholder="0788762" /></label>
+            <div class="toolbar wrap">
+              <button class="btn" id="btnRegType">Registration type</button>
+              <button class="btn" id="btnStatl">Active taxpayer (STATL)</button>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>SAP diagnostics</legend>
+            <p class="hint">
+              Use these to confirm the exact field names on this installation before going live —
+              line-level tax properties differ between B1 versions.
+            </p>
+            <button class="btn" id="btnMetadata">Download Service Layer $metadata</button>
+            <label>Inspect raw invoice by DocEntry<input id="diag_docEntry" type="number" /></label>
+            <button class="btn" id="btnRawInvoice">Fetch raw invoice JSON</button>
+          </fieldset>
+        </div>
+        <h3>Output</h3>
+        <pre id="toolOutput" class="output">—</pre>
+      </section>
+    </main>
+
+    <!-- --------------------------------------------------------- DRAWER -->
+    <aside id="drawer" class="drawer hidden">
+      <div class="drawer-head">
+        <h2 id="drawerTitle">Invoice</h2>
+        <button id="drawerClose" class="btn btn-ghost">Close</button>
+      </div>
+      <div id="drawerBody" class="drawer-body"></div>
+    </aside>
+
+    <footer class="console">
+      <div class="console-head">
+        <span>Activity</span>
+        <button id="btnClearLog" class="btn btn-ghost btn-sm">Clear</button>
+      </div>
+      <pre id="logView"></pre>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "sap": {
+    "baseUrl": "https://10.0.1.55:50000",
+    "companyDB": "YOUR_COMPANY_DB",
+    "username": "manager",
+    "allowSelfSigned": true
+  },
+  "fbr": {
+    "environment": "sandbox"
+  },
+  "seller": {
+    "ntnCnic": "0000000",
+    "businessName": "Your Company (Pvt) Ltd",
+    "province": "Sindh",
+    "address": "Karachi"
+  },
+  "mapping": {
+    "defaultScenarioId": "SN001",
+    "defaultSaleType": "Goods at standard rate (default)",
+    "defaultUom": "Numbers, pieces, units",
+    "provinces": { "SD": "Sindh", "PB": "Punjab" },
+    "uom": { "PCS": "Numbers, pieces, units", "KG": "Kilogram" }
+  },
+  "itemOverrides": {
+    "ITEM01": { "hsCode": "0101.2100", "uoM": "Numbers, pieces, units" }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "sap-fbr-invoicing",
+  "version": "0.1.0",
+  "description": "SAP Business One (Service Layer) to FBR Digital Invoicing bridge - registers A/R invoices with FBR and writes the IRN back to SAP.",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node scripts/selftest.js"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}
