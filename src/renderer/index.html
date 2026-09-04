@@ -233,6 +233,12 @@
               Use these to confirm the exact field names on this installation before going live —
               line-level tax properties differ between B1 versions.
             </p>
+            <button class="btn btn-primary" id="btnDiagnoseSap">Diagnose SAP login</button>
+            <p class="hint">
+              Works out whether a failed login is the company database or the user account. The
+              probe logins use deliberately non-existent credentials, so no real account can be
+              locked out.
+            </p>
             <button class="btn" id="btnMetadata">Download Service Layer $metadata</button>
             <label>Inspect raw invoice by DocEntry<input id="diag_docEntry" type="number" /></label>
             <button class="btn" id="btnRawInvoice">Fetch raw invoice JSON</button>

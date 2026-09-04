@@ -56,6 +56,96 @@ class SyncService {
   }
 
   /**
+   * Work out WHY a SAP login is failing, without risking an account lockout.
+   *
+   * Service Layer delegates login to the SLD, which both resolves the company
+   * database and validates the user. A failure could be either link, and the
+   * relayed message rarely says which. So we send two logins built entirely
+   * from non-existent credentials and compare how Service Layer reacts:
+   *
+   *   probe A: the CONFIGURED company + a user that cannot exist
+   *   probe B: a company that cannot exist + a user that cannot exist
+   *
+   * Same error for both  -> the configured company is being rejected exactly
+   *                         like a non-existent one, so CompanyDB (or its SLD
+   *                         registration) is the problem.
+   * Different errors      -> the company resolved fine and the login got as far
+   *                         as user validation, so it is the user or password.
+   *
+   * Neither probe uses a real account name, so no real account can be locked.
+   */
+  async diagnoseSap() {
+    const cfg = this.config().sap;
+    const client = this.sapClient();
+    const findings = [];
+    const nonce = Date.now().toString(36);
+    const fakeUser = `zz_probe_${nonce}`;
+    const fakeCompany = `ZZ_NO_SUCH_DB_${nonce}`;
+    const fakePassword = `zz_${nonce}_zz`;
+
+    if (!cfg.baseUrl) {
+      return { reachable: false, findings: ['No SAP base URL configured.'], probes: {} };
+    }
+
+    const probeA = await client.probeLogin({
+      companyDB: cfg.companyDB,
+      username: fakeUser,
+      password: fakePassword,
+    });
+
+    if (!probeA.reachable) {
+      return {
+        reachable: false,
+        probes: { configuredCompany: probeA },
+        findings: [
+          `Service Layer at ${cfg.baseUrl} did not respond: ${probeA.message}`,
+          'Nothing else can be tested until the endpoint is reachable. Check the host, port, protocol (http vs https) and any firewall or VPN between this machine and the server.',
+        ],
+      };
+    }
+
+    const probeB = await client.probeLogin({
+      companyDB: fakeCompany,
+      username: fakeUser,
+      password: fakePassword,
+    });
+
+    findings.push(
+      `Service Layer at ${cfg.baseUrl} is reachable and responding — the URL, port and protocol are correct.`
+    );
+
+    const sameAsNonexistent =
+      String(probeA.code) === String(probeB.code) && probeA.status === probeB.status;
+
+    if (sameAsNonexistent) {
+      findings.push(
+        `Company database "${cfg.companyDB}" is rejected with exactly the same error as a database that does not exist (${probeA.code}). Service Layer is not resolving it.`,
+        'Check, in this order:',
+        '  1. The exact database/schema name — it is case-sensitive, and it is the DB name, not the company display name shown in the B1 client.',
+        '  2. That the database is registered in the SLD: open https://<server>:40000/ControlCenter and confirm it is listed under the database server.',
+        '  3. That the SLD can still reach the database server. If the DB account it stores (HANA SYSTEM, or the SQL Server login) had its password changed or expired, every company fails this way.'
+      );
+    } else {
+      findings.push(
+        `Company database "${cfg.companyDB}" is accepted — it produces a different error (${probeA.code}) than a non-existent database (${probeB.code}), so the login is getting as far as validating the user.`,
+        'That points at the user rather than the company. Check:',
+        '  1. The user name is the B1 user CODE (as in the B1 client user list), not an email or a Windows/SQL account.',
+        '  2. The password is correct, and the account is neither locked nor expired.',
+        '  3. The user has a licence assigned that permits Service Layer / DI API access.'
+      );
+    }
+
+    return {
+      reachable: true,
+      sameAsNonexistent,
+      companyDB: cfg.companyDB,
+      baseUrl: cfg.baseUrl,
+      probes: { configuredCompany: probeA, nonexistentCompany: probeB },
+      findings,
+    };
+  }
+
+  /**
    * Verify the FBR token by calling a harmless reference endpoint. A 401 here
    * means a bad or wrong-environment token; anything else means the token works.
    */

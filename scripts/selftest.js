@@ -8,6 +8,7 @@
 const assert = require('node:assert');
 const { buildFbrPayload, toIsoDate, normaliseProvince, formatRate } = require('../src/main/mapper');
 const { interpretResponse } = require('../src/main/fbrClient');
+const { sapErrorCode, describeSapError, LOGIN_HINTS } = require('../src/main/sapClient');
 
 let passed = 0;
 let failed = 0;
@@ -262,6 +263,32 @@ test('an item-level rejection under a 00 envelope is not treated as accepted', (
   assert.strictEqual(r.accepted, false);
   assert.ok(/item 1/i.test(r.errorSummary));
   assert.ok(/0046/.test(r.errorSummary));
+});
+
+console.log('\nsapClient — error interpretation');
+
+test('sapErrorCode extracts the numeric B1 code', () => {
+  const body = {
+    error: { code: -306, message: { lang: 'en-us', value: 'Fail to NONE-SSO login from SLD' } },
+  };
+  assert.strictEqual(sapErrorCode(body), -306);
+  assert.strictEqual(sapErrorCode({}), null);
+  assert.strictEqual(sapErrorCode('plain text'), null);
+  assert.strictEqual(sapErrorCode(null), null);
+});
+
+test('describeSapError renders code and message together', () => {
+  const body = {
+    error: { code: -306, message: { lang: 'en-us', value: 'Fail to NONE-SSO login from SLD' } },
+  };
+  assert.strictEqual(describeSapError(body), '-306 Fail to NONE-SSO login from SLD');
+});
+
+test('the SLD login failure carries actionable guidance', () => {
+  const hint = LOGIN_HINTS['-306'];
+  assert.ok(hint, 'expected a hint for -306');
+  assert.ok(/CompanyDB/.test(hint), 'hint should mention the company database');
+  assert.ok(/SLD/.test(hint), 'hint should mention the SLD');
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

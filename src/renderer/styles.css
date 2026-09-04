@@ -195,6 +195,8 @@ tr.empty td { color: var(--fg-dim); text-align: center; padding: 24px; }
   background: #2b2310;
   color: #f0d68a;
   margin-bottom: 12px;
+  /* SAP error hints are multi-line and lose all meaning if collapsed. */
+  white-space: pre-wrap;
 }
 .alert.err { border-color: var(--err); background: #2b1416; color: #ffb4ae; }
 .alert.ok { border-color: var(--ok); background: #12261a; color: #7ee094; }

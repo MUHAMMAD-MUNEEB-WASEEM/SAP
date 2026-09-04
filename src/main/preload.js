@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   test: {
     sap: () => invoke('test:sap'),
     fbr: () => invoke('test:fbr'),
+    diagnoseSap: () => invoke('diagnose:sap'),
   },
   invoices: {
     list: (filters) => invoke('invoices:list', filters),

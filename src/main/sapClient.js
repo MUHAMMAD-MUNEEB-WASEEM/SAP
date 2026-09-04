@@ -45,9 +45,13 @@ class SapClient {
     });
 
     if (res.status !== 200) {
+      const code = sapErrorCode(res.body);
+      const hint = LOGIN_HINTS[String(code)];
       throw new HttpError(
-        `SAP login failed (HTTP ${res.status}): ${describeSapError(res.body)}`,
-        { status: res.status, body: res.body }
+        `SAP login failed (HTTP ${res.status}): ${describeSapError(res.body)}${
+          hint ? `\n\n${hint}` : ''
+        }`,
+        { status: res.status, body: res.body, sapCode: code }
       );
     }
 
@@ -64,6 +68,34 @@ class SapClient {
       version: res.body && res.body.Version,
       sessionTimeout: res.body && res.body.SessionTimeout,
     };
+  }
+
+  /**
+   * Attempt a login purely to observe how Service Layer reacts, without
+   * disturbing the client's real session.
+   *
+   * Used by the diagnostics with deliberately non-existent credentials, so it
+   * can never lock out a real B1 account - the point is to compare error codes,
+   * not to get in.
+   */
+  async probeLogin({ companyDB, username, password }) {
+    try {
+      const res = await request({
+        url: `${this.root}/Login`,
+        method: 'POST',
+        insecure: this.insecure,
+        timeoutMs: this.cfg.timeoutMs || 60000,
+        body: { CompanyDB: companyDB, UserName: username, Password: password },
+      });
+      return {
+        reachable: true,
+        status: res.status,
+        code: sapErrorCode(res.body),
+        message: describeSapError(res.body),
+      };
+    } catch (err) {
+      return { reachable: false, status: null, code: null, message: err.message };
+    }
   }
 
   async logout() {
@@ -210,6 +242,37 @@ class SapClient {
   }
 }
 
+/**
+ * Actionable guidance for the login failures that are otherwise cryptic.
+ *
+ * Service Layer does not authenticate on its own: it delegates to the System
+ * Landscape Directory (SLD), which resolves the company database and validates
+ * the B1 user against it. So most login errors are really SLD errors, and the
+ * text Service Layer relays says little about which link in that chain broke.
+ */
+const LOGIN_HINTS = {
+  '-306': [
+    '"NONE-SSO login" means a plain user-name/password login, and the SLD refused it.',
+    'The SLD is what resolves the company and validates the user, so the fault is almost always one of:',
+    '  1. CompanyDB does not match a database registered in the SLD (it is case-sensitive and must be the',
+    '     database/schema name, not the company display name).',
+    '  2. The B1 user name or password is wrong, or the account is locked or has no licence.',
+    '  3. The SLD cannot reach the database server itself - typically because the stored DB account',
+    '     (HANA SYSTEM, or the SQL Server login) had its password changed or expired.',
+    'Run Tools -> Diagnose SAP login to tell these apart without risking an account lockout.',
+  ].join('\n'),
+  '-304': 'The company database was not found or could not be opened. Check the CompanyDB spelling and that it is registered in the SLD.',
+  '-119': 'The user account is locked or has exceeded the allowed number of failed login attempts. Unlock it in the SAP B1 client.',
+  '-131': 'The user name or password is not valid for this company.',
+};
+
+/** Pull the numeric B1 error code out of a Service Layer error body. */
+function sapErrorCode(body) {
+  if (!body || typeof body !== 'object' || !body.error) return null;
+  const code = body.error.code;
+  return code === undefined || code === null ? null : code;
+}
+
 /** Service Layer errors arrive as { error: { code, message: { lang, value } } }. */
 function describeSapError(body) {
   if (!body) return 'no response body';
@@ -221,4 +284,4 @@ function describeSapError(body) {
   return `${err.code || ''} ${text || JSON.stringify(err)}`.trim();
 }
 
-module.exports = { SapClient, describeSapError };
+module.exports = { SapClient, describeSapError, sapErrorCode, LOGIN_HINTS };

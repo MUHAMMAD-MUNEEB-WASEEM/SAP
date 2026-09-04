@@ -513,6 +513,15 @@ $('btnStatl').addEventListener('click', async () => {
   if (d) showTool(d);
 });
 
+$('btnDiagnoseSap').addEventListener('click', async () => {
+  const d = await call(window.api.test.diagnoseSap(), 'SAP login diagnostics');
+  if (!d) return;
+  const probes = Object.entries(d.probes || {})
+    .map(([k, v]) => `  ${k}: HTTP ${v.status ?? '—'}  code ${v.code ?? '—'}  ${v.message || ''}`)
+    .join('\n');
+  showTool(`${d.findings.join('\n')}\n\nProbe detail\n${probes}`);
+});
+
 $('btnMetadata').addEventListener('click', async () => {
   const d = await call(window.api.diagnostics.metadata(), 'Download $metadata');
   if (d) showTool(`Saved ${d.bytes.toLocaleString()} bytes to:\n${d.path}`);

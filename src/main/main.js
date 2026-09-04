@@ -143,6 +143,13 @@ function registerHandlers() {
     return r;
   });
 
+  handle('diagnose:sap', async () => {
+    log('Running SAP login diagnostics (probe logins use fake credentials only)…');
+    const r = await sync.diagnoseSap();
+    r.findings.forEach((line) => log(`  ${line}`));
+    return r;
+  });
+
   handle('test:fbr', async () => {
     const r = await sync.testFbr();
     log(`FBR ${r.environment} token OK — reference API returned ${r.provinceCount} provinces.`);
