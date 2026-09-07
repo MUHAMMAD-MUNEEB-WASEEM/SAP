@@ -244,6 +244,40 @@ class SapClient {
     return res.body;
   }
 
+  /**
+   * Page through the item master for the FBR mapping editor.
+   *
+   * Only the "missing data" filter is applied server-side. Text search is left
+   * to the caller because the string functions differ between the OData
+   * dialects Service Layer versions expose, and getting that wrong fails the
+   * whole query rather than degrading.
+   */
+  async listItems({ hsField, uomField, saleTypeField, missingOnly, pageSize = 200, skip = 0 }) {
+    const select = ['ItemCode', 'ItemName', hsField, uomField, saleTypeField]
+      .filter(Boolean)
+      .join(',');
+
+    const parts = [`$select=${encodeURIComponent(select)}`];
+    if (missingOnly) {
+      const filter =
+        `(${hsField} eq null or ${hsField} eq '') or (${uomField} eq null or ${uomField} eq '')`;
+      parts.push(`$filter=${encodeURIComponent(filter)}`);
+    }
+    parts.push(`$orderby=${encodeURIComponent('ItemCode')}`);
+    if (skip) parts.push(`$skip=${Number(skip)}`);
+
+    const res = await this.withSession('GET', `/Items?${parts.join('&')}`, undefined, {
+      Prefer: `odata.maxpagesize=${pageSize}`,
+    });
+    return (res.body && res.body.value) || [];
+  }
+
+  /** Write FBR mapping fields onto an item master record. */
+  async patchItem(itemCode, fields) {
+    await this.withSession('PATCH', `/Items('${encodeURIComponent(itemCode)}')`, fields);
+    return true;
+  }
+
   async getItem(itemCode) {
     const res = await this.withSession(
       'GET',

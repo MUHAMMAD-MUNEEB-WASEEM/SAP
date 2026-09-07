@@ -71,6 +71,79 @@ function createWindow() {
   });
 }
 
+/** Quote a CSV cell only when it needs it. */
+function csvCell(value) {
+  const s = String(value == null ? '' : value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * Minimal RFC4180 CSV reader - handles quoted fields, embedded commas,
+ * doubled quotes and both line endings. Enough for a spreadsheet round-trip,
+ * and avoids a dependency for one file format.
+ */
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else {
+          quoted = false;
+        }
+      } else {
+        cell += c;
+      }
+      continue;
+    }
+    if (c === '"') {
+      quoted = true;
+    } else if (c === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell);
+      cell = '';
+      if (row.some((v) => v !== '')) rows.push(row);
+      row = [];
+    } else {
+      cell += c;
+    }
+  }
+  row.push(cell);
+  if (row.some((v) => v !== '')) rows.push(row);
+
+  if (!rows.length) return [];
+
+  // Map by header name so column order in the spreadsheet does not matter.
+  const header = rows[0].map((h) => h.trim().toLowerCase().replace(/[^a-z]/g, ''));
+  const idx = (name) => header.indexOf(name);
+  const iCode = idx('itemcode');
+  const iName = idx('itemname');
+  const iHs = idx('hscode');
+  const iUom = idx('uom');
+  const iSale = idx('saletype');
+
+  return rows
+    .slice(1)
+    .map((r) => ({
+      itemCode: (iCode >= 0 ? r[iCode] : r[0] || '').trim(),
+      itemName: (iName >= 0 ? r[iName] : '') || '',
+      hsCode: ((iHs >= 0 ? r[iHs] : '') || '').trim(),
+      uoM: ((iUom >= 0 ? r[iUom] : '') || '').trim(),
+      saleType: ((iSale >= 0 ? r[iSale] : '') || '').trim(),
+    }))
+    .filter((r) => r.itemCode);
+}
+
 /** Wrap a handler so the renderer always receives {ok, data|error}. */
 function handle(channel, fn) {
   ipcMain.handle(channel, async (_event, ...args) => {
@@ -210,6 +283,44 @@ function registerHandlers() {
       }
     })
   );
+
+  // -------------------------------------------------------- item mapping
+  handle('items:list', async (opts) => sync.listItemsForMapping(opts || {}));
+
+  handle('items:blocking', async (filters) => sync.itemsBlockingInvoices(filters || {}));
+
+  handle('items:save', async (rows) => {
+    log(`Writing FBR mapping to ${(rows || []).length} item(s)…`);
+    return sync.saveItemMappings(rows || []);
+  });
+
+  handle('items:exportCsv', async (rows) => {
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export item mapping',
+      defaultPath: path.join(app.getPath('documents'), 'fbr-item-mapping.csv'),
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    });
+    if (res.canceled || !res.filePath) return null;
+    const header = 'ItemCode,ItemName,HSCode,UoM,SaleType\n';
+    const body = (rows || [])
+      .map((r) => [r.itemCode, r.itemName, r.hsCode, r.uoM, r.saleType].map(csvCell).join(','))
+      .join('\n');
+    fs.writeFileSync(res.filePath, header + body + '\n', 'utf8');
+    log(`Item mapping exported to ${res.filePath}`);
+    return res.filePath;
+  });
+
+  handle('items:importCsv', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import item mapping',
+      properties: ['openFile'],
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    });
+    if (res.canceled || !res.filePaths.length) return null;
+    const rows = parseCsv(fs.readFileSync(res.filePaths[0], 'utf8'));
+    log(`Imported ${rows.length} row(s) from ${res.filePaths[0]}`);
+    return rows;
+  });
 
   // ------------------------------------------------------------- repair
   handle('repair:writeBacks', async () => {

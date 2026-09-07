@@ -24,6 +24,7 @@
 
     <nav class="tabs">
       <button class="tab active" data-tab="invoices">Invoices</button>
+      <button class="tab" data-tab="items">Item mapping</button>
       <button class="tab" data-tab="settings">Settings</button>
       <button class="tab" data-tab="audit">Audit log</button>
       <button class="tab" data-tab="tools">Tools</button>
@@ -64,6 +65,60 @@
             <tbody id="invoiceBody">
               <tr class="empty">
                 <td colspan="9">Set up the connection under Settings, then press Refresh.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- -------------------------------------------------- ITEM MAPPING -->
+      <section id="tab-items" class="tabpanel">
+        <div class="toolbar wrap">
+          <button id="btnLoadBlocking" class="btn btn-primary">Load items blocking my invoices</button>
+          <button id="btnLoadMissing" class="btn">Load all unmapped items</button>
+          <label class="check"><input type="checkbox" id="itemsShowAll" /> Include already-mapped</label>
+          <input id="itemSearch" placeholder="Filter by code or name…" />
+          <span class="spacer"></span>
+          <button id="btnItemsImport" class="btn">Import CSV…</button>
+          <button id="btnItemsExport" class="btn">Export CSV…</button>
+        </div>
+
+        <div class="toolbar wrap bulk">
+          <strong>Fill selected:</strong>
+          <input id="bulkHs" placeholder="HS code, e.g. 0101.2100" />
+          <input id="bulkUom" list="uomList" placeholder="Unit of measure" />
+          <input id="bulkSaleType" placeholder="Sale type" />
+          <button id="btnBulkFill" class="btn">Apply to selected rows</button>
+          <button id="btnLoadUoms" class="btn btn-ghost">Load FBR UoM list</button>
+        </div>
+        <datalist id="uomList"></datalist>
+
+        <div id="itemsAlert" class="alert hidden"></div>
+
+        <div class="toolbar">
+          <button id="btnItemsSave" class="btn btn-accent">Save changes to SAP</button>
+          <span id="itemsStatus" class="muted"></span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="itemsSelectAll" /></th>
+                <th>Item code</th>
+                <th>Description</th>
+                <th>HS code</th>
+                <th>Unit of measure</th>
+                <th>Sale type</th>
+                <th>Used on</th>
+              </tr>
+            </thead>
+            <tbody id="itemsBody">
+              <tr class="empty">
+                <td colspan="7">
+                  Press “Load items blocking my invoices” to see only the items standing between you
+                  and the invoices in your current date range.
+                </td>
               </tr>
             </tbody>
           </table>
@@ -136,6 +191,23 @@
               Default scenario ID (sandbox only)
               <select id="map_defaultScenarioId"></select>
             </label>
+            <label>
+              Fallback buyer province
+              <select id="map_defaultProvince">
+                <option value="">— none, treat as a blocking error —</option>
+                <option>Punjab</option>
+                <option>Sindh</option>
+                <option>Khyber Pakhtunkhwa</option>
+                <option>Balochistan</option>
+                <option>Capital Territory</option>
+                <option>Gilgit Baltistan</option>
+                <option>Azad Jammu and Kashmir</option>
+              </select>
+            </label>
+            <p class="hint">
+              Used only when the business partner has no usable province. Every invoice that relies
+              on it is flagged with a warning, because the province affects the filing.
+            </p>
             <label>Default sale type<input id="map_defaultSaleType" /></label>
             <label>Default unit of measure<input id="map_defaultUom" placeholder="Numbers, pieces, units" /></label>
             <label>Default HS code<input id="map_defaultHsCode" placeholder="0101.2100" /></label>

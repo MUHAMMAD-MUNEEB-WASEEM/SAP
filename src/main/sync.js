@@ -259,6 +259,108 @@ class SyncService {
     };
   }
 
+  // -------------------------------------------------------- item mapping
+
+  /** Item master rows for the FBR mapping editor. */
+  async listItemsForMapping({ missingOnly = true, skip = 0, pageSize = 200 } = {}) {
+    const f = this.config().sapFields;
+    const rows = await this.sapClient().listItems({
+      hsField: f.itemHsCodeField,
+      uomField: f.itemUomField,
+      saleTypeField: f.itemSaleTypeField,
+      missingOnly,
+      skip,
+      pageSize,
+    });
+    return rows.map((r) => ({
+      itemCode: r.ItemCode,
+      itemName: r.ItemName,
+      hsCode: r[f.itemHsCodeField] || '',
+      uoM: r[f.itemUomField] || '',
+      saleType: r[f.itemSaleTypeField] || '',
+    }));
+  }
+
+  /**
+   * Write FBR mapping values back onto the item master.
+   *
+   * Only the fields actually supplied are sent, so a blank column in an
+   * imported CSV leaves the existing SAP value alone rather than wiping it.
+   * Each item is patched individually and failures are collected, so one bad
+   * item code does not abandon the rest of the batch.
+   */
+  async saveItemMappings(rows) {
+    const f = this.config().sapFields;
+    const results = [];
+
+    for (const row of rows || []) {
+      if (!row || !row.itemCode) continue;
+      const fields = {};
+      if (row.hsCode !== undefined && row.hsCode !== '') fields[f.itemHsCodeField] = row.hsCode;
+      if (row.uoM !== undefined && row.uoM !== '') fields[f.itemUomField] = row.uoM;
+      if (row.saleType !== undefined && row.saleType !== '' && f.itemSaleTypeField) {
+        fields[f.itemSaleTypeField] = row.saleType;
+      }
+      if (!Object.keys(fields).length) continue;
+
+      try {
+        await this.sapClient().patchItem(row.itemCode, fields);
+        results.push({ itemCode: row.itemCode, ok: true });
+      } catch (err) {
+        results.push({ itemCode: row.itemCode, ok: false, error: err.message });
+      }
+    }
+
+    const saved = results.filter((r) => r.ok).length;
+    this.log(`Item mapping save: ${saved} updated, ${results.length - saved} failed.`);
+    return { attempted: results.length, saved, failed: results.length - saved, results };
+  }
+
+  /**
+   * Item codes appearing on invoices in range that still lack FBR mapping data.
+   * Lets the user fix exactly what is blocking the invoices they care about,
+   * rather than working through the whole item master.
+   */
+  async itemsBlockingInvoices({ fromDate, toDate } = {}) {
+    const f = this.config().sapFields;
+    const sap = this.sapClient();
+    const invoices = await this.listPending({ fromDate, toDate });
+
+    const needed = new Map();
+    for (const inv of invoices) {
+      const full = await sap.getInvoice(inv.docEntry);
+      for (const line of full.DocumentLines || []) {
+        if (!line.ItemCode || needed.has(line.ItemCode)) continue;
+        needed.set(line.ItemCode, { itemCode: line.ItemCode, docNums: [] });
+      }
+      for (const line of full.DocumentLines || []) {
+        const entry = needed.get(line.ItemCode);
+        if (entry && !entry.docNums.includes(inv.docNum)) entry.docNums.push(inv.docNum);
+      }
+    }
+
+    const out = [];
+    for (const entry of needed.values()) {
+      try {
+        const item = await sap.getItem(entry.itemCode);
+        const hsCode = item[f.itemHsCodeField] || '';
+        const uoM = item[f.itemUomField] || '';
+        if (hsCode && uoM) continue; // already mapped
+        out.push({
+          itemCode: entry.itemCode,
+          itemName: item.ItemName || '',
+          hsCode,
+          uoM,
+          saleType: (f.itemSaleTypeField && item[f.itemSaleTypeField]) || '',
+          usedOn: entry.docNums,
+        });
+      } catch (err) {
+        out.push({ itemCode: entry.itemCode, itemName: '', hsCode: '', uoM: '', saleType: '', error: err.message, usedOn: entry.docNums });
+      }
+    }
+    return out;
+  }
+
   // -------------------------------------------------------------- listing
 
   async listPending({ fromDate, toDate, includeRegistered = false } = {}) {

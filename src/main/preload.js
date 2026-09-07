@@ -28,6 +28,13 @@ contextBridge.exposeInMainWorld('api', {
     submit: (docEntry, opts) => invoke('invoices:submit', docEntry, opts),
     submitMany: (docEntries) => invoke('invoices:submitMany', docEntries),
   },
+  items: {
+    list: (opts) => invoke('items:list', opts),
+    blocking: (filters) => invoke('items:blocking', filters),
+    save: (rows) => invoke('items:save', rows),
+    exportCsv: (rows) => invoke('items:exportCsv', rows),
+    importCsv: () => invoke('items:importCsv'),
+  },
   repair: {
     writeBacks: () => invoke('repair:writeBacks'),
   },

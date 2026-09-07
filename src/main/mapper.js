@@ -136,7 +136,20 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   const rawProvince =
     pick(businessPartner, [f.bpProvinceField || 'U_FBR_Province'], null) ||
     extractProvince(invoice, businessPartner);
-  const buyerProvince = normaliseProvince(rawProvince, map.provinces);
+  let buyerProvince = normaliseProvince(rawProvince, map.provinces);
+
+  // A configured fallback keeps invoices moving when the business partner has
+  // no usable state, but it is recorded as a warning every time: the province
+  // affects the filing, so silently guessing it would be wrong.
+  if (!buyerProvince && map.defaultProvince) {
+    buyerProvince = map.defaultProvince;
+    warnings.push(
+      `Buyer province could not be read from the business partner; used the configured fallback "${map.defaultProvince}". Set ${
+        f.bpProvinceField || 'U_FBR_Province'
+      } on the business partner to record the real one.`
+    );
+  }
+
   if (!buyerProvince) {
     errors.push(
       `Buyer province could not be determined or does not match an FBR province. Set ${

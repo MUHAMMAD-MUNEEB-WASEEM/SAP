@@ -212,6 +212,24 @@ test('a total that disagrees with DocTotal raises a warning, not an error', () =
   assert.ok(warnings.some((w) => /differs from SAP DocTotal/i.test(w)));
 });
 
+test('a missing buyer province blocks unless a fallback is configured', () => {
+  const noProvince = { ...bp, U_FBR_Province: '' };
+
+  const blocked = buildFbrPayload({ invoice, businessPartner: noProvince, items, config });
+  assert.strictEqual(blocked.payload, null);
+  assert.ok(blocked.errors.some((e) => /province/i.test(e)));
+
+  const withFallback = {
+    ...config,
+    mapping: { ...config.mapping, defaultProvince: 'Punjab' },
+  };
+  const r = buildFbrPayload({ invoice, businessPartner: noProvince, items, config: withFallback });
+  assert.ok(r.payload, 'fallback should let the payload build');
+  assert.strictEqual(r.payload.buyerProvince, 'Punjab');
+  // Using the fallback must never be silent - the province affects the filing.
+  assert.ok(r.warnings.some((w) => /fallback/i.test(w)));
+});
+
 console.log('\nfbrClient — response interpretation');
 
 test('a valid response yields the invoice number', () => {

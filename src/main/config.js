@@ -65,6 +65,7 @@ const DEFAULTS = {
   mapping: {
     defaultInvoiceType: 'Sale Invoice',
     defaultScenarioId: 'SN001',
+    defaultProvince: '',
     defaultSaleType: 'Goods at standard rate (default)',
     defaultUom: '',
     defaultHsCode: '',

@@ -120,6 +120,7 @@ function fillForm(c) {
   $('seller_address').value = c.seller.address || '';
 
   $('map_defaultScenarioId').value = c.mapping.defaultScenarioId || 'SN001';
+  $('map_defaultProvince').value = c.mapping.defaultProvince || '';
   $('map_defaultSaleType').value = c.mapping.defaultSaleType || '';
   $('map_defaultUom').value = c.mapping.defaultUom || '';
   $('map_defaultHsCode').value = c.mapping.defaultHsCode || '';
@@ -173,6 +174,7 @@ function readForm() {
     },
     mapping: {
       defaultScenarioId: $('map_defaultScenarioId').value,
+      defaultProvince: $('map_defaultProvince').value,
       defaultSaleType: $('map_defaultSaleType').value.trim(),
       defaultUom: $('map_defaultUom').value.trim(),
       defaultHsCode: $('map_defaultHsCode').value.trim(),
@@ -395,6 +397,191 @@ $('btnSubmitSel').addEventListener('click', async () => {
 
 window.api.on.batchProgress((p) => {
   appendLog(`Batch ${p.index}/${p.total} — DocEntry ${p.docEntry}: ${p.result.ok ? 'registered' : 'failed'}`);
+});
+
+/* --------------------------------------------------------- item mapping */
+
+let itemRows = [];
+
+function renderItems() {
+  const body = $('itemsBody');
+  const needle = $('itemSearch').value.trim().toLowerCase();
+  const visible = needle
+    ? itemRows.filter(
+        (r) =>
+          r.itemCode.toLowerCase().includes(needle) ||
+          String(r.itemName || '').toLowerCase().includes(needle)
+      )
+    : itemRows;
+
+  if (!visible.length) {
+    body.innerHTML = `<tr class="empty"><td colspan="7">${
+      itemRows.length ? 'No rows match the filter.' : 'Nothing loaded yet.'
+    }</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = visible
+    .map((r) => {
+      const i = itemRows.indexOf(r);
+      const incomplete = !r.hsCode || !r.uoM;
+      return `<tr data-i="${i}"${incomplete ? ' class="row-incomplete"' : ''}>
+        <td><input type="checkbox" class="itemcheck" data-i="${i}" /></td>
+        <td class="mono">${esc(r.itemCode)}</td>
+        <td>${esc(r.itemName || '')}</td>
+        <td><input class="cell" data-i="${i}" data-k="hsCode" value="${esc(r.hsCode || '')}" placeholder="0101.2100" /></td>
+        <td><input class="cell" data-i="${i}" data-k="uoM" list="uomList" value="${esc(r.uoM || '')}" /></td>
+        <td><input class="cell" data-i="${i}" data-k="saleType" value="${esc(r.saleType || '')}" /></td>
+        <td class="muted">${esc((r.usedOn || []).join(', '))}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
+$('itemsBody').addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.classList.contains('cell')) return;
+  const row = itemRows[Number(el.dataset.i)];
+  if (row) {
+    row[el.dataset.k] = el.value;
+    row._dirty = true;
+  }
+});
+
+$('itemSearch').addEventListener('input', renderItems);
+
+$('itemsSelectAll').addEventListener('change', (e) => {
+  document.querySelectorAll('.itemcheck').forEach((c) => {
+    c.checked = e.target.checked;
+  });
+});
+
+$('btnLoadBlocking').addEventListener('click', async () => {
+  $('itemsAlert').classList.add('hidden');
+  $('itemsStatus').textContent = 'Loading…';
+  const rows = await call(
+    window.api.items.blocking({
+      fromDate: $('fromDate').value || undefined,
+      toDate: $('toDate').value || undefined,
+    }),
+    'Load blocking items'
+  );
+  $('itemsStatus').textContent = '';
+  if (!rows) return;
+  itemRows = rows;
+  renderItems();
+  showItemsAlert(
+    rows.length
+      ? `${rows.length} item(s) on invoices in your date range still need an HS code or unit of measure.`
+      : 'Every item on the invoices in range already has its FBR mapping.',
+    rows.length ? 'warn' : 'ok'
+  );
+});
+
+$('btnLoadMissing').addEventListener('click', async () => {
+  $('itemsStatus').textContent = 'Loading…';
+  const rows = await call(
+    window.api.items.list({ missingOnly: !$('itemsShowAll').checked, pageSize: 500 }),
+    'Load item master'
+  );
+  $('itemsStatus').textContent = '';
+  if (!rows) return;
+  itemRows = rows;
+  renderItems();
+  showItemsAlert(`Loaded ${rows.length} item(s).`, 'ok');
+});
+
+function showItemsAlert(message, kind) {
+  const el = $('itemsAlert');
+  el.className = `alert ${kind === 'ok' ? 'ok' : kind === 'error' ? 'err' : ''}`;
+  el.textContent = message;
+  el.classList.remove('hidden');
+}
+
+$('btnBulkFill').addEventListener('click', () => {
+  const hs = $('bulkHs').value.trim();
+  const uom = $('bulkUom').value.trim();
+  const saleType = $('bulkSaleType').value.trim();
+  if (!hs && !uom && !saleType) return showItemsAlert('Enter a value to fill first.', 'warn');
+
+  const targets = [...document.querySelectorAll('.itemcheck:checked')].map((c) => Number(c.dataset.i));
+  if (!targets.length) return showItemsAlert('Tick the rows to fill first.', 'warn');
+
+  for (const i of targets) {
+    const row = itemRows[i];
+    if (!row) continue;
+    if (hs) row.hsCode = hs;
+    if (uom) row.uoM = uom;
+    if (saleType) row.saleType = saleType;
+    row._dirty = true;
+  }
+  renderItems();
+  showItemsAlert(`Filled ${targets.length} row(s). Nothing is written to SAP until you press Save.`, 'ok');
+});
+
+$('btnLoadUoms').addEventListener('click', async () => {
+  const list = await call(window.api.fbr.reference('uom', {}), 'FBR unit-of-measure list');
+  if (!list) return;
+  const values = (Array.isArray(list) ? list : []).map(
+    (u) => u.description || u.uoM || u.uom || u.name || String(u)
+  );
+  $('uomList').innerHTML = values.map((v) => `<option value="${esc(v)}"></option>`).join('');
+  showItemsAlert(`Loaded ${values.length} FBR unit(s) of measure — they now autocomplete in the UoM boxes.`, 'ok');
+});
+
+$('btnItemsSave').addEventListener('click', async () => {
+  const dirty = itemRows.filter((r) => r._dirty && (r.hsCode || r.uoM || r.saleType));
+  if (!dirty.length) return showItemsAlert('No changes to save.', 'warn');
+
+  const ok = window.confirm(`Write FBR mapping to ${dirty.length} item master record(s) in SAP?`);
+  if (!ok) return;
+
+  $('itemsStatus').textContent = 'Saving…';
+  const r = await call(window.api.items.save(dirty), 'Save item mapping');
+  $('itemsStatus').textContent = '';
+  if (!r) return;
+
+  if (r.failed) {
+    const failures = r.results.filter((x) => !x.ok).map((x) => `${x.itemCode}: ${x.error}`);
+    showItemsAlert(`${r.saved} saved, ${r.failed} failed.\n${failures.join('\n')}`, 'error');
+  } else {
+    dirty.forEach((row) => delete row._dirty);
+    showItemsAlert(`${r.saved} item(s) updated in SAP.`, 'ok');
+  }
+});
+
+$('btnItemsExport').addEventListener('click', async () => {
+  if (!itemRows.length) return showItemsAlert('Load some items first.', 'warn');
+  const p = await call(window.api.items.exportCsv(itemRows), 'Export item mapping');
+  if (p) showItemsAlert(`Exported to ${p}. Fill it in a spreadsheet, then use Import CSV.`, 'ok');
+});
+
+$('btnItemsImport').addEventListener('click', async () => {
+  const rows = await call(window.api.items.importCsv(), 'Import item mapping');
+  if (!rows) return;
+
+  // Merge onto what is loaded so unchanged rows are not needlessly rewritten.
+  const byCode = new Map(itemRows.map((r) => [r.itemCode, r]));
+  let merged = 0;
+  let added = 0;
+  for (const incoming of rows) {
+    const existing = byCode.get(incoming.itemCode);
+    if (existing) {
+      if (incoming.hsCode) existing.hsCode = incoming.hsCode;
+      if (incoming.uoM) existing.uoM = incoming.uoM;
+      if (incoming.saleType) existing.saleType = incoming.saleType;
+      existing._dirty = true;
+      merged++;
+    } else {
+      itemRows.push({ ...incoming, _dirty: true });
+      added++;
+    }
+  }
+  renderItems();
+  showItemsAlert(
+    `Imported ${rows.length} row(s): ${merged} matched, ${added} new. Review, then press “Save changes to SAP”.`,
+    'ok'
+  );
 });
 
 /* -------------------------------------------------------------- drawer */

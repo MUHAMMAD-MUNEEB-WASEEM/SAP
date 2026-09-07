@@ -187,6 +187,29 @@ tr.empty td { color: var(--fg-dim); text-align: center; padding: 24px; }
 
 .mono { font-family: var(--mono); font-size: 12px; }
 
+/* --------------------------------------------------------- item mapping */
+.toolbar.bulk {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.toolbar.bulk strong { font-size: 12px; color: var(--fg-dim); font-weight: 600; }
+
+/* Editable grid cells sit flush in the table rather than looking like a form. */
+input.cell {
+  width: 100%;
+  min-width: 130px;
+  padding: 4px 7px;
+  background: var(--bg);
+  border-color: transparent;
+}
+input.cell:hover { border-color: var(--line); }
+input.cell:focus { border-color: var(--accent); background: var(--bg-3); }
+
+/* A left edge marks rows still missing something FBR requires. */
+tr.row-incomplete td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+
 /* -------------------------------------------------------------- alerts */
 .alert {
   padding: 10px 13px;
