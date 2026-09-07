@@ -143,6 +143,23 @@ function registerHandlers() {
     return r;
   });
 
+  handle('diagnose:setup', async () => {
+    const r = await sync.checkSetup();
+    log(
+      r.ready
+        ? 'SAP setup check: all required user-defined fields are present.'
+        : `SAP setup check: ${r.missingRequired} required user-defined field(s) missing.`
+    );
+    return r;
+  });
+
+  handle('setup:createUdfs', async () => {
+    log('Creating missing user-defined fields in SAP…');
+    const r = await sync.createMissingUdfs();
+    log(`UDF creation finished: ${r.created} created, ${r.failed} failed.`);
+    return r;
+  });
+
   handle('diagnose:sap', async () => {
     log('Running SAP login diagnostics (probe logins use fake credentials only)…');
     const r = await sync.diagnoseSap();

@@ -16,6 +16,7 @@
 const { SapClient } = require('./sapClient');
 const { FbrClient } = require('./fbrClient');
 const { buildFbrPayload } = require('./mapper');
+const { tableGroups } = require('./udfSpecs');
 
 class SyncService {
   constructor({ configStore, store, log }) {
@@ -159,19 +160,130 @@ class SyncService {
     };
   }
 
+  /**
+   * Confirm the user-defined fields this app reads and writes actually exist in
+   * SAP. Worth checking up front: the invoice query selects the IRN and status
+   * UDFs by name, so a missing field fails the whole listing with an OData
+   * error that says nothing about which one is absent.
+   */
+  async checkSetup() {
+    const f = this.config().sapFields;
+    const report = [];
+    let missingRequired = 0;
+    let missingTotal = 0;
+
+    for (const group of tableGroups()) {
+      let present;
+      try {
+        const udfs = await this.sapClient().getUserFields(group.table);
+        present = new Set(udfs.map((u) => String(u.Name).toUpperCase()));
+      } catch (err) {
+        report.push({ ...group, error: err.message, fields: [] });
+        continue;
+      }
+
+      const fields = group.specs
+        .map((spec) => {
+          // A site may rename a field in Settings; check what is configured,
+          // falling back to the spec default.
+          const configured = f[spec.configKey] || `U_${spec.name}`;
+
+          // Standard (non-UDF) fields such as FederalTaxID always exist.
+          if (!/^U_/i.test(configured)) {
+            return { field: configured, spec, required: spec.required, purpose: spec.purpose, status: 'standard' };
+          }
+
+          const bare = configured.replace(/^U_/i, '');
+          const exists = present.has(bare.toUpperCase());
+          if (!exists) {
+            missingTotal++;
+            if (spec.required) missingRequired++;
+          }
+          return {
+            field: configured,
+            bare,
+            spec,
+            required: spec.required,
+            purpose: spec.purpose,
+            status: exists ? 'present' : 'missing',
+          };
+        })
+        .filter(Boolean);
+
+      report.push({ table: group.table, label: group.label, location: group.location, fields });
+    }
+
+    return { ready: missingRequired === 0, missingRequired, missingTotal, report };
+  }
+
+  /**
+   * Create every user-defined field the check reported as missing.
+   *
+   * This alters the company database schema, so the caller is responsible for
+   * getting the user's explicit confirmation first. Each field is created
+   * individually and failures are collected rather than thrown, so one rejected
+   * field does not abandon the rest.
+   */
+  async createMissingUdfs() {
+    const check = await this.checkSetup();
+    const results = [];
+
+    for (const group of check.report) {
+      for (const field of group.fields) {
+        if (field.status !== 'missing') continue;
+        const { spec } = field;
+        try {
+          await this.sapClient().createUserField({
+            tableName: group.table,
+            name: field.bare,
+            description: spec.description,
+            type: spec.type,
+            subType: spec.subType,
+            size: spec.size,
+          });
+          this.log(`Created UDF ${group.table}.U_${field.bare}`);
+          results.push({ table: group.table, field: field.field, ok: true });
+        } catch (err) {
+          this.log(`Failed to create UDF ${group.table}.U_${field.bare}: ${err.message}`);
+          results.push({ table: group.table, field: field.field, ok: false, error: err.message });
+        }
+      }
+    }
+
+    const created = results.filter((r) => r.ok).length;
+    return {
+      attempted: results.length,
+      created,
+      failed: results.length - created,
+      results,
+    };
+  }
+
   // -------------------------------------------------------------- listing
 
   async listPending({ fromDate, toDate, includeRegistered = false } = {}) {
     const cfg = this.config();
     const f = cfg.sapFields;
-    const rows = await this.sapClient().listInvoices({
-      statusField: f.statusField,
-      irnField: f.irnField,
-      fromDate: fromDate || defaultFromDate(cfg.sync.lookbackDays),
-      toDate,
-      pageSize: cfg.sync.pageSize,
-      includeRegistered,
-    });
+    let rows;
+    try {
+      rows = await this.sapClient().listInvoices({
+        statusField: f.statusField,
+        irnField: f.irnField,
+        fromDate: fromDate || defaultFromDate(cfg.sync.lookbackDays),
+        toDate,
+        pageSize: cfg.sync.pageSize,
+        includeRegistered,
+      });
+    } catch (err) {
+      // By far the most common cause: the UDFs have not been created, or the
+      // Service Layer has not been restarted since they were.
+      if (/does not exist|invalid field|no property|not found/i.test(err.message)) {
+        throw new Error(
+          `${err.message}\n\nThis usually means the FBR user-defined fields have not been created in SAP yet, or the Service Layer has not been restarted since they were added. Run Tools -> Check SAP setup to see exactly which fields are missing.`
+        );
+      }
+      throw err;
+    }
 
     const local = this.store.latestByDocEntry();
     return rows.map((r) => {

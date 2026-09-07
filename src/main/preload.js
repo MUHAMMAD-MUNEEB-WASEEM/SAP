@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('api', {
     sap: () => invoke('test:sap'),
     fbr: () => invoke('test:fbr'),
     diagnoseSap: () => invoke('diagnose:sap'),
+    checkSetup: () => invoke('diagnose:setup'),
+    createUdfs: () => invoke('setup:createUdfs'),
   },
   invoices: {
     list: (filters) => invoke('invoices:list', filters),

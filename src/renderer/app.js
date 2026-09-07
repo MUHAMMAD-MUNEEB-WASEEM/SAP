@@ -513,6 +513,68 @@ $('btnStatl').addEventListener('click', async () => {
   if (d) showTool(d);
 });
 
+$('btnCheckSetup').addEventListener('click', async () => {
+  const d = await call(window.api.test.checkSetup(), 'SAP setup check');
+  if (!d) return;
+  const lines = [
+    d.ready
+      ? 'READY — every required user-defined field exists.'
+      : `NOT READY — ${d.missingRequired} required field(s) missing. Create them per scripts/sap-udf-setup.md, then restart the Service Layer.`,
+    '',
+  ];
+  for (const g of d.report) {
+    lines.push(`${g.label} (${g.table})`);
+    if (g.error) {
+      lines.push(`  could not read: ${g.error}`);
+    } else if (!g.fields.length) {
+      lines.push('  nothing configured');
+    } else {
+      for (const f of g.fields) {
+        const mark =
+          f.status === 'present' ? 'ok      ' : f.status === 'standard' ? 'standard' : 'MISSING ';
+        const req = f.status === 'missing' ? (f.required ? '  [required]' : '  [optional]') : '';
+        lines.push(`  ${mark} ${f.field.padEnd(22)} ${f.purpose}${req}`);
+      }
+    }
+    lines.push('');
+  }
+  showTool(lines.join('\n'));
+});
+
+$('btnCreateUdfs').addEventListener('click', async () => {
+  const check = await call(window.api.test.checkSetup(), 'SAP setup check');
+  if (!check) return;
+
+  const missing = check.report.flatMap((g) =>
+    g.fields.filter((f) => f.status === 'missing').map((f) => `${g.table}.${f.field}`)
+  );
+  if (!missing.length) {
+    showTool('Nothing to create — every user-defined field already exists.');
+    return;
+  }
+
+  const ok = window.confirm(
+    `Create ${missing.length} user-defined field(s) in the SAP company database?\n\n` +
+      `${missing.join('\n')}\n\n` +
+      'This alters the database schema. Removing a UDF later discards any data stored in it, ' +
+      'so do this on a test company first, with other users logged off.'
+  );
+  if (!ok) return;
+
+  const r = await call(window.api.test.createUdfs(), 'Create user-defined fields');
+  if (!r) return;
+
+  const lines = [
+    `${r.created} created, ${r.failed} failed.`,
+    '',
+    ...r.results.map((x) => `  ${x.ok ? 'ok     ' : 'FAILED '} ${x.table}.${x.field}${x.ok ? '' : ` — ${x.error}`}`),
+    '',
+    'Restart the SAP Service Layer service now, then run "Check SAP setup" again —',
+    'Service Layer caches its metadata and will not expose the new fields until it does.',
+  ];
+  showTool(lines.join('\n'));
+});
+
 $('btnDiagnoseSap').addEventListener('click', async () => {
   const d = await call(window.api.test.diagnoseSap(), 'SAP login diagnostics');
   if (!d) return;

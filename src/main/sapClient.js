@@ -192,6 +192,44 @@ class SapClient {
     return (res.body && res.body.value) || [];
   }
 
+  /**
+   * User-defined fields declared on a table, via the UserFieldsMD metadata
+   * object. Note that `Name` here excludes the `U_` prefix that appears on the
+   * entity itself: a UDF created as "FBR_IRN" is read back as U_FBR_IRN.
+   */
+  async getUserFields(tableName) {
+    const filter = encodeURIComponent(`TableName eq '${tableName}'`);
+    const res = await this.withSession(
+      'GET',
+      `/UserFieldsMD?$filter=${filter}&$select=TableName,Name,Description,Type,EditSize`,
+      undefined,
+      { Prefer: 'odata.maxpagesize=500' }
+    );
+    return (res.body && res.body.value) || [];
+  }
+
+  /**
+   * Create a user-defined field through the supported metadata API.
+   *
+   * This is a schema change to the company database and is not casually
+   * reversible - dropping a UDF later discards whatever was stored in it - so
+   * callers must confirm with the user first. Note that B1 adds the `U_`
+   * prefix itself: pass "FBR_IRN" to end up with U_FBR_IRN on the entity.
+   */
+  async createUserField({ tableName, name, description, type, subType, size }) {
+    const body = {
+      TableName: tableName,
+      Name: name,
+      Description: description,
+      Type: type || 'db_Alpha',
+    };
+    if (body.Type === 'db_Alpha') body.EditSize = size || 50;
+    if (subType) body.SubType = subType;
+
+    const res = await this.withSession('POST', '/UserFieldsMD', body);
+    return res.body;
+  }
+
   /** Full invoice including DocumentLines. */
   async getInvoice(docEntry) {
     const res = await this.withSession('GET', `/Invoices(${Number(docEntry)})`);

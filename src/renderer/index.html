@@ -233,6 +233,17 @@
               Use these to confirm the exact field names on this installation before going live —
               line-level tax properties differ between B1 versions.
             </p>
+            <button class="btn btn-primary" id="btnCheckSetup">Check SAP setup</button>
+            <p class="hint">
+              Confirms the FBR user-defined fields exist on the invoice, business partner and item
+              tables. Run this before the first Refresh.
+            </p>
+            <button class="btn btn-accent" id="btnCreateUdfs">Create missing UDFs in SAP</button>
+            <p class="hint">
+              Creates the missing fields through the Service Layer metadata API. This changes the
+              company database schema — you will be asked to confirm, and the Service Layer must be
+              restarted afterwards before the fields appear.
+            </p>
             <button class="btn btn-primary" id="btnDiagnoseSap">Diagnose SAP login</button>
             <p class="hint">
               Works out whether a failed login is the company database or the user account. The
