@@ -131,6 +131,14 @@ class FbrClient {
     return this.call(REFERENCE.docTypeCode, 'GET');
   }
 
+  /**
+   * FBR's full HS code list with descriptions. Takes no parameters and returns
+   * the whole catalogue, so callers should fetch once and search locally.
+   */
+  async getHsCodes() {
+    return this.call(REFERENCE.itemDescCode, 'GET');
+  }
+
   /** Valid UoMs for a given HS code (annexure_id 3 = sales). */
   async getHsUom(hsCode, annexureId = 3) {
     const url = `${REFERENCE.hsUom}?hs_code=${encodeURIComponent(hsCode)}&annexure_id=${annexureId}`;

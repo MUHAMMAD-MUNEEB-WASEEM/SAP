@@ -429,7 +429,7 @@ function renderItems() {
         <td><input type="checkbox" class="itemcheck" data-i="${i}" /></td>
         <td class="mono">${esc(r.itemCode)}</td>
         <td>${esc(r.itemName || '')}</td>
-        <td><input class="cell" data-i="${i}" data-k="hsCode" value="${esc(r.hsCode || '')}" placeholder="0101.2100" /></td>
+        <td><input class="cell" data-i="${i}" data-k="hsCode" value="${esc(r.hsCode || '')}" placeholder="not set" /></td>
         <td><input class="cell" data-i="${i}" data-k="uoM" list="uomList" value="${esc(r.uoM || '')}" /></td>
         <td><input class="cell" data-i="${i}" data-k="saleType" value="${esc(r.saleType || '')}" /></td>
         <td class="muted">${esc((r.usedOn || []).join(', '))}</td>
@@ -517,6 +517,68 @@ $('btnBulkFill').addEventListener('click', () => {
   }
   renderItems();
   showItemsAlert(`Filled ${targets.length} row(s). Nothing is written to SAP until you press Save.`, 'ok');
+});
+
+/* HS code finder — FBR's published catalogue, fetched once and searched locally. */
+let hsCatalogue = null;
+
+async function ensureHsCatalogue() {
+  if (hsCatalogue) return hsCatalogue;
+  $('hsSearchStatus').textContent = 'Loading FBR HS code list…';
+  const list = await call(window.api.fbr.reference('hsCodes', {}), 'FBR HS code list');
+  $('hsSearchStatus').textContent = '';
+  if (!list) return null;
+  hsCatalogue = (Array.isArray(list) ? list : []).map((r) => ({
+    code: r.hS_CODE || r.hs_code || r.hsCode || '',
+    description: r.description || '',
+  }));
+  return hsCatalogue;
+}
+
+async function runHsSearch() {
+  const needle = $('hsSearch').value.trim().toLowerCase();
+  if (!needle) return;
+
+  const list = await ensureHsCatalogue();
+  if (!list) return;
+
+  const terms = needle.split(/\s+/);
+  const hits = list
+    .filter((r) => {
+      const hay = `${r.code} ${r.description}`.toLowerCase();
+      return terms.every((t) => hay.includes(t));
+    })
+    .slice(0, 60);
+
+  $('hsSearchStatus').textContent = `${hits.length} match${hits.length === 1 ? '' : 'es'}${
+    hits.length === 60 ? ' (showing first 60)' : ''
+  } of ${list.length} codes`;
+
+  $('hsResults').innerHTML = hits.length
+    ? hits
+        .map(
+          (r) => `<button type="button" class="hs-hit" data-code="${esc(r.code)}">
+            <span class="hs-code">${esc(r.code)}</span>
+            <span class="hs-desc">${esc(r.description)}</span>
+          </button>`
+        )
+        .join('')
+    : '<p class="hint">No matches. Try a broader word — FBR descriptions are the full tariff wording, in upper case.</p>';
+}
+
+$('btnHsSearch').addEventListener('click', runHsSearch);
+$('hsSearch').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') runHsSearch();
+});
+
+$('hsResults').addEventListener('click', (e) => {
+  const hit = e.target.closest('.hs-hit');
+  if (!hit) return;
+  $('bulkHs').value = hit.dataset.code;
+  showItemsAlert(
+    `HS code ${hit.dataset.code} put in the “Fill selected” box. Tick the rows it applies to, then press “Apply to selected rows”.`,
+    'ok'
+  );
 });
 
 $('btnLoadUoms').addEventListener('click', async () => {

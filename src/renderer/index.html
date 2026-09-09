@@ -85,13 +85,30 @@
 
         <div class="toolbar wrap bulk">
           <strong>Fill selected:</strong>
-          <input id="bulkHs" placeholder="HS code, e.g. 0101.2100" />
+          <input id="bulkHs" placeholder="HS code (nnnn.nnnn)" />
           <input id="bulkUom" list="uomList" placeholder="Unit of measure" />
           <input id="bulkSaleType" placeholder="Sale type" />
           <button id="btnBulkFill" class="btn">Apply to selected rows</button>
           <button id="btnLoadUoms" class="btn btn-ghost">Load FBR UoM list</button>
         </div>
         <datalist id="uomList"></datalist>
+
+        <details id="hsFinder" class="finder">
+          <summary>Find an HS code in FBR's official list</summary>
+          <div class="finder-body">
+            <div class="toolbar wrap">
+              <input id="hsSearch" placeholder="Search by description, e.g. carton, corrugated…" />
+              <button id="btnHsSearch" class="btn">Search</button>
+              <span id="hsSearchStatus" class="muted"></span>
+            </div>
+            <p class="hint">
+              Searches the list FBR publishes at <code>/pdi/v1/itemdesccode</code>. Picking a result
+              puts it in the “Fill selected” box above — it does not change any row on its own.
+              Classifying your goods correctly remains your responsibility.
+            </p>
+            <div id="hsResults" class="finder-results"></div>
+          </div>
+        </details>
 
         <div id="itemsAlert" class="alert hidden"></div>
 

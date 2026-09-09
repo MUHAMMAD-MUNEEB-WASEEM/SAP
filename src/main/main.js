@@ -345,6 +345,8 @@ function registerHandlers() {
         return client.getDocTypes();
       case 'transTypes':
         return client.getTransactionTypes();
+      case 'hsCodes':
+        return client.getHsCodes();
       case 'hsUom':
         return client.getHsUom(params.hsCode, params.annexureId);
       case 'saleTypeToRate':
