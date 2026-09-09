@@ -208,6 +208,17 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   const lines = Array.isArray(invoice.DocumentLines) ? invoice.DocumentLines : [];
   if (lines.length === 0) errors.push('Invoice has no document lines.');
 
+  // Missing master data is collected per ITEM rather than per line. An invoice
+  // with ten lines of the same unmapped product is one thing to fix, not ten,
+  // and reporting it per line obscures that the fix lives on the item master.
+  const missingHsCode = new Map();
+  const missingUom = new Map();
+  const missingSaleType = new Map();
+  const noteMissing = (bucket, key, lineNo) => {
+    if (!bucket.has(key)) bucket.set(key, []);
+    bucket.get(key).push(lineNo);
+  };
+
   lines.forEach((line, idx) => {
     const n = idx + 1;
     const itemCode = pick(line, ['ItemCode'], '');
@@ -224,13 +235,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       pick(line, [f.lineHsCodeField || 'U_FBR_HSCode'], null) ||
       map.defaultHsCode ||
       null;
-    if (!hsCode) {
-      errors.push(
-        `Line ${n} (${label}): no HS code. Set ${
-          f.itemHsCodeField || 'U_FBR_HSCode'
-        } on the item master, or add an override under Settings -> Item overrides.`
-      );
-    }
+    if (!hsCode) noteMissing(missingHsCode, label, n);
 
     const uoM =
       override.uoM ||
@@ -238,13 +243,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       mapUom(pick(line, ['MeasureUnit', 'UoMCode', 'UoMEntry'], null), map.uom) ||
       map.defaultUom ||
       null;
-    if (!uoM) {
-      errors.push(
-        `Line ${n} (${label}): no FBR unit of measure. Set ${
-          f.itemUomField || 'U_FBR_UOM'
-        } on the item master, or add a UoM mapping.`
-      );
-    }
+    if (!uoM) noteMissing(missingUom, label, n);
 
     const saleType =
       override.saleType ||
@@ -252,9 +251,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       pick(itemMaster, [f.itemSaleTypeField || 'U_FBR_SaleType'], null) ||
       map.defaultSaleType ||
       null;
-    if (!saleType) {
-      errors.push(`Line ${n} (${label}): no sale type. Set a default under Settings -> Mapping.`);
-    }
+    if (!saleType) noteMissing(missingSaleType, label, n);
 
     const net = lineNetAmount(line);
     const tax = lineTaxAmount(line, net);
@@ -313,6 +310,30 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     });
   });
 
+  if (missingHsCode.size) {
+    errors.push(
+      `${missingHsCode.size} item(s) have no HS code: ${describeMissing(missingHsCode)}. Set ${
+        f.itemHsCodeField || 'U_FBR_HSCode'
+      } on the item master — once per product, not per invoice. Use the Item mapping tab.`
+    );
+  }
+  if (missingUom.size) {
+    errors.push(
+      `${missingUom.size} item(s) have no FBR unit of measure: ${describeMissing(missingUom)}. Set ${
+        f.itemUomField || 'U_FBR_UOM'
+      } on the item master — once per product, not per invoice. Use the Item mapping tab.`
+    );
+  }
+  if (missingSaleType.size) {
+    errors.push(
+      `${missingSaleType.size} item(s) have no sale type: ${describeMissing(
+        missingSaleType
+      )}. Set a default under Settings -> Mapping, or ${
+        f.itemSaleTypeField || 'U_FBR_SaleType'
+      } on the item master.`
+    );
+  }
+
   // Sanity check against the SAP document total. A mismatch almost always means
   // the line tax amount was read from the wrong property for this B1 version.
   if (payload.items.length && invoice.DocTotal != null) {
@@ -328,6 +349,21 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   }
 
   return { payload: errors.length ? null : payload, errors, warnings };
+}
+
+/**
+ * Render a bucket of missing master data as "CODE (lines 1, 4)", listing at
+ * most a handful of item codes so one bad import does not produce an
+ * unreadable wall of text.
+ */
+function describeMissing(bucket, limit = 8) {
+  const entries = [...bucket.entries()];
+  const shown = entries
+    .slice(0, limit)
+    .map(([code, lineNos]) => `${code} (line${lineNos.length > 1 ? 's' : ''} ${lineNos.join(', ')})`)
+    .join(', ');
+  const rest = entries.length - limit;
+  return rest > 0 ? `${shown} and ${rest} more` : shown;
 }
 
 function extractProvince(invoice, bp) {

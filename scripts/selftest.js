@@ -212,6 +212,33 @@ test('a total that disagrees with DocTotal raises a warning, not an error', () =
   assert.ok(warnings.some((w) => /differs from SAP DocTotal/i.test(w)));
 });
 
+test('missing master data is reported per item, not per line', () => {
+  // Four lines of the SAME unmapped product is one thing to fix, not four.
+  const repeated = {
+    ...invoice,
+    DocumentLines: [1, 2, 3, 4].map(() => ({
+      ItemCode: 'SAME-1',
+      ItemDescription: 'Repeated product',
+      Quantity: 1,
+      UnitPrice: 10,
+      LineTotal: 10,
+      TaxPercentagePerRow: 18,
+    })),
+  };
+  const r = buildFbrPayload({
+    invoice: repeated,
+    businessPartner: bp,
+    items: new Map(),
+    config,
+  });
+  const hsErrors = r.errors.filter((e) => /HS code/i.test(e));
+  assert.strictEqual(hsErrors.length, 1, 'one consolidated HS code error expected');
+  assert.ok(/^1 item\(s\)/.test(hsErrors[0]), `expected a count of 1, got: ${hsErrors[0]}`);
+  assert.ok(/lines 1, 2, 3, 4/.test(hsErrors[0]), 'affected lines should still be named');
+  // The wording has to answer "do I set this per invoice?" — it is per product.
+  assert.ok(/once per product, not per invoice/.test(hsErrors[0]));
+});
+
 test('a missing buyer province blocks unless a fallback is configured', () => {
   const noProvince = { ...bp, U_FBR_Province: '' };
 
