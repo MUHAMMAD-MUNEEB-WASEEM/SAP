@@ -67,6 +67,7 @@ const DEFAULTS = {
     defaultScenarioId: 'SN001',
     defaultProvince: '',
     defaultBuyerAddress: '',
+    defaultSellerAddress: '',
     extractHsFromText: true,
     defaultSaleType: 'Goods at standard rate (default)',
     defaultUom: '',

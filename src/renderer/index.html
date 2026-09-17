@@ -40,6 +40,8 @@
             <input type="checkbox" id="includeRegistered" /> Show already registered
           </label>
           <button id="btnRefresh" class="btn btn-primary">Refresh</button>
+          <input id="invoiceSearch" placeholder="Search doc no. or customer…" />
+          <span id="invoiceCount" class="muted"></span>
           <span class="spacer"></span>
           <button id="btnValidateSel" class="btn">Validate selected</button>
           <button id="btnSubmitSel" class="btn btn-accent">Register selected with FBR</button>
@@ -232,10 +234,6 @@
               Used only when the business partner has no usable province. Every invoice that relies
               on it is flagged with a warning, because the province affects the filing.
             </p>
-            <label>
-              Fallback buyer address
-              <input id="map_defaultBuyerAddress" placeholder="used only when SAP has none" />
-            </label>
             <label>Default sale type<input id="map_defaultSaleType" /></label>
             <label>
               Default unit of measure
@@ -257,6 +255,23 @@
               Write the FBR number back to SAP automatically
             </label>
             <label>Look back (days)<input id="sync_lookbackDays" type="number" min="1" max="365" /></label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Address defaults</legend>
+            <p class="hint">
+              FBR requires an address for both parties. These are used only when SAP has none —
+              every invoice that relies on one is flagged with a warning, so a fallback can never
+              pass unnoticed into a filing.
+            </p>
+            <label>
+              Default seller address
+              <input id="map_defaultSellerAddress" placeholder="used when Seller → Address is blank" />
+            </label>
+            <label>
+              Default buyer address
+              <input id="map_defaultBuyerAddress" placeholder="used when the customer has none in SAP" />
+            </label>
           </fieldset>
 
           <fieldset class="span2">

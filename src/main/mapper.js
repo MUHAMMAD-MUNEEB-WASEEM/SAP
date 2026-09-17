@@ -254,7 +254,17 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   if (!seller.ntnCnic) errors.push('Seller NTN/CNIC is not configured (Settings -> Seller).');
   if (!seller.businessName) errors.push('Seller business name is not configured.');
   if (!seller.province) errors.push('Seller province is not configured.');
-  if (!seller.address) errors.push('Seller address is not configured.');
+  const sellerAddress = cleanAddress(seller.address) || cleanAddress(map.defaultSellerAddress);
+  if (!seller.address && sellerAddress) {
+    warnings.push(
+      `Seller address is blank under Settings -> Seller; used the configured default "${sellerAddress}".`
+    );
+  }
+  if (!sellerAddress) {
+    errors.push(
+      'Seller address is not configured. Set it under Settings -> Seller, or give a default under Settings -> Address defaults.'
+    );
+  }
 
   // Buyer NTN/CNIC: BP master federal tax ID, or a UDF override on the BP.
   const buyerNtn = String(
@@ -323,7 +333,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     sellerNTNCNIC: seller.ntnCnic || '',
     sellerBusinessName: seller.businessName || '',
     sellerProvince: seller.province || '',
-    sellerAddress: seller.address || '',
+    sellerAddress: sellerAddress || '',
     buyerNTNCNIC: buyerNtn,
     buyerBusinessName: invoice.CardName || pick(businessPartner, ['CardName'], ''),
     buyerProvince: buyerProvince || '',

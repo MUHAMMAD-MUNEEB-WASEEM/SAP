@@ -517,6 +517,31 @@ test('the address is found on the business partner address collection', () => {
   assert.strictEqual(r.payload.buyerAddress, '5 Mall Rd, Lahore, Punjab');
 });
 
+test('a default seller address unblocks, and says so', () => {
+  const noSeller = { ...config, seller: { ...config.seller, address: '' } };
+  const blocked = buildFbrPayload({ invoice, businessPartner: bp, items, config: noSeller });
+  assert.strictEqual(blocked.payload, null);
+  assert.ok(blocked.errors.some((e) => /Seller address is not configured/i.test(e)));
+
+  const withDefault = {
+    ...noSeller,
+    mapping: { ...config.mapping, defaultSellerAddress: 'Plot 5, SITE Area, Karachi' },
+  };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: withDefault });
+  assert.strictEqual(r.payload.sellerAddress, 'Plot 5, SITE Area, Karachi');
+  assert.ok(r.warnings.some((w) => /configured default/i.test(w)));
+});
+
+test('a seller address in Settings beats the default', () => {
+  const both = {
+    ...config,
+    mapping: { ...config.mapping, defaultSellerAddress: 'Should not be used' },
+  };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: both });
+  assert.strictEqual(r.payload.sellerAddress, 'Karachi');
+  assert.ok(!r.warnings.some((w) => /configured default/i.test(w)));
+});
+
 test('a fallback address unblocks, and says so', () => {
   const inv = { ...invoice, Address: '' };
   const blocked = buildFbrPayload({ invoice: inv, businessPartner: bp, items, config });

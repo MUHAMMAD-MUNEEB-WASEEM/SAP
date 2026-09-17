@@ -103,32 +103,43 @@ function populateScenarios() {
   sel.innerHTML = SCENARIOS.map(([id, desc]) => `<option value="${id}">${id} — ${esc(desc)}</option>`).join('');
 }
 
-function fillForm(c) {
-  $('sap_baseUrl').value = c.sap.baseUrl || '';
-  $('sap_companyDB').value = c.sap.companyDB || '';
-  $('sap_username').value = c.sap.username || '';
-  $('sap_password').value = c.sap.password || '';
-  $('sap_allowSelfSigned').checked = c.sap.allowSelfSigned !== false;
+function fillForm(config_) {
+  // Tolerate a partially populated config rather than throwing half way
+  // through and leaving the form in a mixed state.
+  const c = config_ || {};
+  const sap = c.sap || {};
+  const fbr = c.fbr || {};
+  const seller = c.seller || {};
+  const mapping = c.mapping || {};
+  const sync = c.sync || {};
+  const sapFields = c.sapFields || {};
 
-  $('fbr_environment').value = c.fbr.environment || 'sandbox';
-  $('fbr_sandboxToken').value = c.fbr.sandboxToken || '';
-  $('fbr_productionToken').value = c.fbr.productionToken || '';
+  $('sap_baseUrl').value = sap.baseUrl || '';
+  $('sap_companyDB').value = sap.companyDB || '';
+  $('sap_username').value = sap.username || '';
+  $('sap_password').value = sap.password || '';
+  $('sap_allowSelfSigned').checked = sap.allowSelfSigned !== false;
 
-  $('seller_ntnCnic').value = c.seller.ntnCnic || '';
-  $('seller_businessName').value = c.seller.businessName || '';
-  $('seller_province').value = c.seller.province || '';
-  $('seller_address').value = c.seller.address || '';
+  $('fbr_environment').value = fbr.environment || 'sandbox';
+  $('fbr_sandboxToken').value = fbr.sandboxToken || '';
+  $('fbr_productionToken').value = fbr.productionToken || '';
 
-  $('map_defaultScenarioId').value = c.mapping.defaultScenarioId || 'SN001';
-  $('map_defaultProvince').value = c.mapping.defaultProvince || '';
-  $('map_defaultBuyerAddress').value = c.mapping.defaultBuyerAddress || '';
-  $('map_defaultSaleType').value = c.mapping.defaultSaleType || '';
-  $('map_defaultUom').value = c.mapping.defaultUom || '';
-  $('map_defaultHsCode').value = c.mapping.defaultHsCode || '';
+  $('seller_ntnCnic').value = seller.ntnCnic || '';
+  $('seller_businessName').value = seller.businessName || '';
+  $('seller_province').value = seller.province || '';
+  $('seller_address').value = seller.address || '';
 
-  $('sync_validateBeforePost').checked = c.sync.validateBeforePost !== false;
-  $('sync_autoWriteBack').checked = c.sync.autoWriteBack !== false;
-  $('sync_lookbackDays').value = c.sync.lookbackDays || 30;
+  $('map_defaultScenarioId').value = mapping.defaultScenarioId || 'SN001';
+  $('map_defaultProvince').value = mapping.defaultProvince || '';
+  $('map_defaultBuyerAddress').value = mapping.defaultBuyerAddress || '';
+  $('map_defaultSellerAddress').value = mapping.defaultSellerAddress || '';
+  $('map_defaultSaleType').value = mapping.defaultSaleType || '';
+  $('map_defaultUom').value = mapping.defaultUom || '';
+  $('map_defaultHsCode').value = mapping.defaultHsCode || '';
+
+  $('sync_validateBeforePost').checked = sync.validateBeforePost !== false;
+  $('sync_autoWriteBack').checked = sync.autoWriteBack !== false;
+  $('sync_lookbackDays').value = sync.lookbackDays || 30;
 
   for (const k of [
     'irnField', 'statusField', 'dateField', 'messageField', 'scenarioField', 'refNoField',
@@ -136,11 +147,11 @@ function fillForm(c) {
     'itemHsCodeField', 'itemUomField', 'itemSaleTypeField',
   ]) {
     const el = $(`f_${k}`);
-    if (el) el.value = c.sapFields[k] || '';
+    if (el) el.value = sapFields[k] || '';
   }
 
   $('encWarn').hidden = c._encryptionAvailable !== false;
-  updateEnvBadge(c.fbr.environment);
+  updateEnvBadge(fbr.environment);
 }
 
 function readForm() {
@@ -177,6 +188,7 @@ function readForm() {
       defaultScenarioId: $('map_defaultScenarioId').value,
       defaultProvince: $('map_defaultProvince').value,
       defaultBuyerAddress: $('map_defaultBuyerAddress').value.trim(),
+      defaultSellerAddress: $('map_defaultSellerAddress').value.trim(),
       defaultSaleType: $('map_defaultSaleType').value.trim(),
       defaultUom: $('map_defaultUom').value.trim(),
       defaultHsCode: $('map_defaultHsCode').value.trim(),
@@ -292,14 +304,36 @@ async function refreshInvoices() {
   }
 }
 
+/** Rows matching the search box — document number or customer, code or name. */
+function visibleInvoices() {
+  const needle = $('invoiceSearch').value.trim().toLowerCase();
+  if (!needle) return invoices;
+  return invoices.filter((inv) =>
+    [inv.docNum, inv.cardName, inv.cardCode, inv.irn, inv.localIrn]
+      .some((v) => v != null && String(v).toLowerCase().includes(needle))
+  );
+}
+
 function renderInvoices() {
   const body = $('invoiceBody');
-  if (!invoices.length) {
-    body.innerHTML = '<tr class="empty"><td colspan="9">No invoices match the current filter.</td></tr>';
+  const rows = visibleInvoices();
+
+  $('invoiceCount').textContent = invoices.length
+    ? rows.length === invoices.length
+      ? `${invoices.length} invoice${invoices.length === 1 ? '' : 's'}`
+      : `${rows.length} of ${invoices.length}`
+    : '';
+
+  if (!rows.length) {
+    body.innerHTML = `<tr class="empty"><td colspan="9">${
+      invoices.length
+        ? 'No invoices match that search.'
+        : 'No invoices match the current filter.'
+    }</td></tr>`;
     return;
   }
 
-  body.innerHTML = invoices
+  body.innerHTML = rows
     .map((inv) => {
       const irn = inv.irn || inv.localIrn;
       let pill = '<span class="pill pill-idle">Not sent</span>';
@@ -326,6 +360,10 @@ function renderInvoices() {
     })
     .join('');
 }
+
+// Filtering is client-side over what Refresh already loaded, so it is instant
+// and does not re-query SAP on every keystroke.
+$('invoiceSearch').addEventListener('input', renderInvoices);
 
 $('selectAll').addEventListener('change', (e) => {
   document.querySelectorAll('.rowcheck:not(:disabled)').forEach((c) => {
