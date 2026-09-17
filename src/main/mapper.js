@@ -142,10 +142,11 @@ const UOM_SYNONYMS = {
   kwh: 'kwh',
 };
 
+/** Reduce a unit name to letters and digits so punctuation cannot defeat a match. */
 const normaliseUomKey = (s) =>
   String(s || '')
     .toLowerCase()
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+    .replace(/[^a-z0-9]/g, '');
 
 /**
  * Propose an FBR unit for a SAP unit code, choosing only from FBR's own list.
@@ -193,6 +194,21 @@ function matchUom(sapUom, fbrList, customMap) {
   if (prefix) return { value: prefix, reason: 'partial match — check this one' };
 
   return null;
+}
+
+/**
+ * Read a percentage out of an FBR rate descriptor.
+ *
+ * Returns null for descriptors that carry no single percentage ("Exempt",
+ * "18% along with rupees 60 per kilogram"), so the caller leaves the tax amount
+ * alone rather than computing a figure it cannot justify.
+ */
+function parseRatePercent(descriptor) {
+  const s = String(descriptor || '').trim();
+  if (!s) return null;
+  // Reject compound descriptors: only a plain "n%" or bare number is usable.
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*%?$/);
+  return m ? Number(m[1]) : null;
 }
 
 /** FBR expects the rate as a descriptor string, e.g. "18%" or "Exempt". */
@@ -403,6 +419,8 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   const missingHsCode = new Map();
   const unreadableHsCode = new Map();
   const remarksSourced = new Set();
+  const overriddenRates = new Map();
+  const unpricedOverrides = new Set();
   const missingUom = new Map();
   const missingSaleType = new Map();
   const noteMissing = (bucket, key, lineNo) => {
@@ -505,12 +523,31 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     const tax = lineTaxAmount(line, net);
 
     const ratePct = pick(line, ['TaxPercentagePerRow', 'VatPrcnt'], null);
-    const rate =
+    let rate =
       override.rate ||
       formatRate(ratePct, map) ||
       formatRate(net !== 0 ? (tax / net) * 100 : null, map) ||
       map.defaultRate ||
       null;
+
+    // A configured override replaces whatever SAP produced. Critically, the tax
+    // AMOUNT is recomputed to match: filing "18%" alongside zero tax would be a
+    // self-contradictory return, and worse than the error it was meant to fix.
+    let taxAmount = tax;
+    if (map.rateOverride) {
+      rate = String(map.rateOverride).trim();
+      const pct = parseRatePercent(rate);
+      if (pct !== null) {
+        const recomputed = round((net * pct) / 100, MONEY);
+        if (Math.abs(recomputed - tax) > 0.01) {
+          overriddenRates.set(label, { from: round(tax, MONEY), to: recomputed, pct });
+          taxAmount = recomputed;
+        }
+      } else {
+        unpricedOverrides.add(rate);
+      }
+    }
+
     if (!rate) {
       errors.push(`Line ${n} (${label}): sales tax rate could not be determined.`);
     }
@@ -534,7 +571,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       rate: rate || '',
       uoM: uoM || '',
       quantity: round(pick(line, ['Quantity'], 0), QTY),
-      totalValues: round(net + tax + furtherTax + extraTax + fedPayable, MONEY),
+      totalValues: round(net + taxAmount + furtherTax + extraTax + fedPayable, MONEY),
       valueSalesExcludingST: round(net, MONEY),
       fixedNotifiedValueOrRetailPrice: round(
         retailPrice !== undefined && retailPrice !== null
@@ -542,7 +579,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
           : pick(line, [f.lineRetailPriceField || 'U_FBR_RetailPrice'], 0),
         MONEY
       ),
-      salesTaxApplicable: round(tax, MONEY),
+      salesTaxApplicable: round(taxAmount, MONEY),
       salesTaxWithheldAtSource: round(stWithheld, MONEY),
       extraTax: round(extraTax, MONEY),
       furtherTax: round(furtherTax, MONEY),
@@ -599,6 +636,23 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       )}. Set a default under Settings -> Mapping, or ${
         f.itemSaleTypeField || 'U_FBR_SaleType'
       } on the item master.`
+    );
+  }
+
+  if (overriddenRates.size) {
+    const shown = [...overriddenRates.entries()]
+      .slice(0, 6)
+      .map(([label, o]) => `${label}: ${o.from.toFixed(2)} -> ${o.to.toFixed(2)}`)
+      .join('; ');
+    warnings.push(
+      `RATE OVERRIDE ACTIVE (${map.rateOverride}). The sales tax on ${overriddenRates.size} line(s) was RECALCULATED and no longer matches the SAP document: ${shown}${
+        overriddenRates.size > 6 ? ` and ${overriddenRates.size - 6} more` : ''
+      }. The filing will state more tax than the invoice in SAP shows — make sure that is what you intend, and that your sales tax return agrees.`
+    );
+  }
+  if (unpricedOverrides.size) {
+    warnings.push(
+      `Rate override "${[...unpricedOverrides].join(', ')}" carries no single percentage, so the rate descriptor was replaced but the tax amounts were left as SAP calculated them.`
     );
   }
 
@@ -709,10 +763,10 @@ function sanitizeText(value) {
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[‘’‛]/g, "'")
-    .replace(/[“”‟]/g, "'")
-    .replace(/[‐-―]/g, '-')
-    .replace(/ /g, ' ')
+    .replace(/[\u2018\u2019\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201F]/g, "'")
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/\u00A0/g, ' ')
     // The double quote and the backslash are the only characters left that
     // JSON has to escape. FBR's gateway rejects a body containing them with
     // "Requested JSON in Malformed" even though the escaping is correct, so

@@ -410,6 +410,14 @@ test('common SAP unit codes resolve to FBR units', () => {
   assert.strictEqual(matchUom('SQM', FBR_UOMS).value, 'Square Metre');
 });
 
+test('punctuation in a SAP unit code does not defeat the match', () => {
+  // Regression: normaliseUomKey must strip everything but letters and digits.
+  assert.strictEqual(matchUom('pcs.', FBR_UOMS).value, 'Numbers, pieces, units');
+  assert.strictEqual(matchUom('K.G.', FBR_UOMS).value, 'KG');
+  assert.strictEqual(matchUom('sq-m', FBR_UOMS).value, 'Square Metre');
+  assert.strictEqual(matchUom(' KG ', FBR_UOMS).value, 'KG');
+});
+
 test('a unit already naming an FBR value matches exactly', () => {
   assert.strictEqual(matchUom('KG', FBR_UOMS).reason, 'exact match');
   assert.strictEqual(matchUom('Numbers, pieces, units', FBR_UOMS).value, 'Numbers, pieces, units');
@@ -520,6 +528,61 @@ test('the payload contains no JSON escape sequences at all', () => {
 test('backslashes are folded too', () => {
   assert.strictEqual(sanitizeText('A\\B'), 'A/B');
   assert.strictEqual(sanitizeText('say "hi"'), "say 'hi'");
+});
+
+console.log('\nmapper — rate override');
+
+test('an override forces the rate AND recalculates the tax to match', () => {
+  const untaxed = JSON.parse(JSON.stringify(invoice));
+  untaxed.DocumentLines[0].TaxPercentagePerRow = 0;
+  untaxed.DocTotal = 1000;
+
+  const cfg = { ...config, mapping: { ...config.mapping, rateOverride: '18%' } };
+  const r = buildFbrPayload({ invoice: untaxed, businessPartner: bp, items, config: cfg });
+  const line = r.payload.items[0];
+
+  assert.strictEqual(line.rate, '18%');
+  // The whole point: rate and amount must agree, or the filing contradicts itself.
+  assert.strictEqual(line.salesTaxApplicable, 180);
+  assert.strictEqual(line.totalValues, 1180);
+  assert.ok(
+    r.warnings.some((w) => /RATE OVERRIDE ACTIVE/.test(w)),
+    'an override that changes the tax must be loudly flagged'
+  );
+  assert.ok(r.warnings.some((w) => /0\.00 -> 180\.00/.test(w)), 'the change must be quantified');
+});
+
+test('an override matching SAP changes nothing and warns about nothing', () => {
+  const cfg = { ...config, mapping: { ...config.mapping, rateOverride: '18%' } };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: cfg });
+  assert.strictEqual(r.payload.items[0].salesTaxApplicable, 180);
+  assert.ok(!r.warnings.some((w) => /RATE OVERRIDE ACTIVE/.test(w)));
+});
+
+test('a non-numeric override sets the descriptor but leaves amounts alone', () => {
+  const cfg = { ...config, mapping: { ...config.mapping, rateOverride: 'Exempt' } };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: cfg });
+  assert.strictEqual(r.payload.items[0].rate, 'Exempt');
+  assert.strictEqual(r.payload.items[0].salesTaxApplicable, 180, 'SAP amount must be preserved');
+  assert.ok(r.warnings.some((w) => /carries no single percentage/i.test(w)));
+});
+
+test('no override leaves SAP untouched', () => {
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items, config });
+  assert.strictEqual(r.payload.items[0].rate, '18%');
+  assert.ok(!r.warnings.some((w) => /RATE OVERRIDE/.test(w)));
+});
+
+test('parseRatePercent rejects compound descriptors', () => {
+  // "18% along with rupees 60 per kilogram" is a real FBR descriptor; deriving
+  // a tax amount from it would silently drop the per-kilogram component.
+  const cfg = {
+    ...config,
+    mapping: { ...config.mapping, rateOverride: '18% along with rupees 60 per kilogram' },
+  };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: cfg });
+  assert.strictEqual(r.payload.items[0].salesTaxApplicable, 180, 'amounts must not be guessed');
+  assert.ok(r.warnings.some((w) => /carries no single percentage/i.test(w)));
 });
 
 console.log('\nmapper — consistency pre-flight checks');

@@ -74,6 +74,7 @@ const DEFAULTS = {
     defaultUom: '',
     defaultHsCode: '',
     defaultRate: '',
+    rateOverride: '',
     rateDecimals: 0,
     provinces: {}, // SAP state code/name -> FBR province name
     uom: {},       // SAP UoM code -> FBR UoM name

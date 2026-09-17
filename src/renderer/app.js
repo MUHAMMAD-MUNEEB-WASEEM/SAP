@@ -137,6 +137,7 @@ function fillForm(config_) {
   $('map_defaultSaleType').value = mapping.defaultSaleType || '';
   $('map_defaultUom').value = mapping.defaultUom || '';
   $('map_defaultHsCode').value = mapping.defaultHsCode || '';
+  $('map_rateOverride').value = mapping.rateOverride || '';
 
   $('sync_validateBeforePost').checked = sync.validateBeforePost !== false;
   $('sync_autoWriteBack').checked = sync.autoWriteBack !== false;
@@ -194,6 +195,7 @@ function readForm() {
       defaultSaleType: $('map_defaultSaleType').value.trim(),
       defaultUom: $('map_defaultUom').value.trim(),
       defaultHsCode: $('map_defaultHsCode').value.trim(),
+      rateOverride: $('map_rateOverride').value.trim(),
     },
     sync: {
       validateBeforePost: $('sync_validateBeforePost').checked,

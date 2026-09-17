@@ -249,6 +249,16 @@
               <input id="map_defaultUom" list="uomList" placeholder="type or pick an FBR unit" />
             </label>
             <label>Default HS code<input id="map_defaultHsCode" placeholder="nnnn.nnnn" /></label>
+            <label>
+              Override rate on every line
+              <input id="map_rateOverride" placeholder="leave blank to use SAP's rate" />
+            </label>
+            <p class="hint warn">
+              Forces the rate on every line, e.g. <code>18%</code>. The sales tax amount is
+              recalculated to match, so the filing will state more tax than the SAP document shows.
+              Use it when SAP's tax setup is wrong and you know the correct rate — every affected
+              invoice is flagged in Preview.
+            </p>
             <button id="btnLoadUomsSettings" class="btn">Load FBR unit list for autocomplete</button>
             <p class="hint">
               These apply to any item that has no value of its own. Fine for sandbox testing; before
