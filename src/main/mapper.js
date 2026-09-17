@@ -46,7 +46,7 @@ function toIsoDate(value) {
  * Pull an HS code out of a field that may hold free text.
  *
  * Sites commonly keep the code in a general-purpose field such as the item
- * master's Remarks (OITM.UserText), where it sits alongside other notes:
+ * master's Remarks (OITM.UserText, exposed as User_Text), where it sits alongside other notes:
  * "HS Code: 4819.1000", "4819.1000 - 5 ply", or just the bare digits. FBR wants
  * the canonical nnnn.nnnn form, so the code is located and normalised rather
  * than the whole field being sent.
@@ -394,9 +394,16 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       [override.hsCode, 'item override'],
       [pick(itemMaster, [f.itemHsCodeField || 'U_FBR_HSCode'], null), f.itemHsCodeField || 'U_FBR_HSCode'],
       [pick(line, [f.lineHsCodeField || 'U_FBR_HSCode'], null), 'the invoice line'],
-      // Many sites keep the code in the item master's Remarks (OITM.UserText)
+      // Many sites keep the code in the item master's Remarks (OITM.UserText, exposed as User_Text)
       // rather than a dedicated field, so it is consulted without configuration.
-      [pick(itemMaster, ['UserText', 'Remarks', 'User_Text'], null), 'the item Remarks'],
+      [pick(itemMaster, ['User_Text', 'UserText', 'Remarks'], null), 'the item Remarks'],
+      // B1's own home for a commodity code, if this site populates it.
+      [
+        itemMaster && itemMaster.ItemIntrastatExtension
+          ? itemMaster.ItemIntrastatExtension.CommodityCode
+          : null,
+        'the item Intrastat commodity code',
+      ],
     ];
 
     // Last resort before the blanket default: look across the item master's

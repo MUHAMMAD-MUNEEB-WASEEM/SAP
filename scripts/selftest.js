@@ -252,12 +252,62 @@ test('dimensions in a description are not mistaken for a code', () => {
   assert.strictEqual(extractHsCode('CARTON 13 x 12 x 10" 5-PLY'), null);
 });
 
+test('Remarks is read from User_Text, the real Items property name', () => {
+  // Service Layer exposes OITM.UserText on Items as `User_Text`, with an
+  // underscore. Reading `UserText` silently finds nothing.
+  const remarksOnly = new Map([
+    ['ITEM01', {
+      ItemCode: 'ITEM01',
+      User_Text: 'HS Code: 4821.1000 - printed label',
+      U_FBR_UOM: 'Numbers, pieces, units',
+      U_FBR_SaleType: 'Goods at standard rate (default)',
+    }],
+  ]);
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items: remarksOnly, config });
+  assert.deepStrictEqual(r.errors, [], `unexpected errors: ${r.errors.join(' | ')}`);
+  assert.strictEqual(r.payload.items[0].hsCode, '4821.1000');
+});
+
+test('the Intrastat commodity code is used when populated', () => {
+  const withCommodity = new Map([
+    ['ITEM01', {
+      ItemCode: 'ITEM01',
+      ItemIntrastatExtension: { CommodityCode: '4819.1000' },
+      U_FBR_UOM: 'Numbers, pieces, units',
+      U_FBR_SaleType: 'Goods at standard rate (default)',
+    }],
+  ]);
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items: withCommodity, config });
+  assert.strictEqual(r.payload.items[0].hsCode, '4819.1000');
+});
+
+test('an item with every source empty is reported as missing, not guessed', () => {
+  // Exactly FGF-LBL-001: the UDFs exist but are null, Remarks is null.
+  const empty = new Map([
+    ['ITEM01', {
+      ItemCode: 'ITEM01',
+      ItemName: 'LABELING & SEALING',
+      U_FBR_HSCode: null,
+      U_FBR_UOM: null,
+      U_FBR_SaleType: null,
+      User_Text: null,
+      SalesUnit: null,
+      InventoryUOM: null,
+      CustomsGroupCode: -1,
+      ItemIntrastatExtension: { CommodityCode: null },
+    }],
+  ]);
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items: empty, config });
+  assert.strictEqual(r.payload, null);
+  assert.ok(r.errors.some((e) => /have no HS code/i.test(e)));
+});
+
 test('the item Remarks field is consulted without any configuration', () => {
   // The default config still points at U_FBR_HSCode; Remarks must still work.
   const remarksOnly = new Map([
     ['ITEM01', {
       ItemCode: 'ITEM01',
-      UserText: 'HS Code: 4821.1000 - printed label',
+      User_Text: 'HS Code: 4821.1000 - printed label',
       U_FBR_UOM: 'Numbers, pieces, units',
       U_FBR_SaleType: 'Goods at standard rate (default)',
     }],

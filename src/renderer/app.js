@@ -200,6 +200,15 @@ function updateEnvBadge(env) {
 
 $('fbr_environment').addEventListener('change', (e) => updateEnvBadge(e.target.value));
 
+$('btnLoadUomsSettings').addEventListener('click', async () => {
+  const options = await ensureUomOptions();
+  if (!options) return;
+  showAlert(
+    `<strong>${options.length} FBR unit(s) loaded.</strong> The Default unit of measure box now autocompletes.`,
+    'ok'
+  );
+});
+
 $('btnSuggestSeller').addEventListener('click', async () => {
   const s = await call(window.api.test.suggestSeller(), 'Read company details from SAP');
   if (!s) return;

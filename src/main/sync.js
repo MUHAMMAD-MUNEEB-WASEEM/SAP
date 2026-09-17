@@ -300,7 +300,7 @@ class SyncService {
     try {
       rows = await this.sapClient().listItems({
         ...base,
-        extraFields: ['InventoryUOM', 'SalesUnit', 'UserText'],
+        extraFields: ['InventoryUOM', 'SalesUnit', 'User_Text'],
       });
     } catch (err) {
       this.log(`Item list without SAP unit columns (${err.message})`);
@@ -311,7 +311,7 @@ class SyncService {
       // Same fall-through the mapper uses: the configured field, then Remarks.
       const configured = r[f.itemHsCodeField] || '';
       const fromConfigured = extract ? extractHsCode(configured) : String(configured).trim();
-      const remarks = r.UserText || '';
+      const remarks = r.User_Text || '';
       const fromRemarks = extract ? extractHsCode(remarks) : '';
       const parsed = fromConfigured || fromRemarks;
       const rawHs = fromConfigured ? configured : fromRemarks ? remarks : configured || remarks;
@@ -419,7 +419,7 @@ class SyncService {
         const item = await sap.getItem(entry.itemCode);
         const extract = this.config().mapping.extractHsFromText !== false;
         const configured = item[f.itemHsCodeField] || '';
-        const remarks = item.UserText || '';
+        const remarks = item.User_Text || '';
         const uoM = item[f.itemUomField] || '';
         // Judge readiness on the EXTRACTED code, from either source: a Remarks
         // field full of text with no code in it is not a mapped item.

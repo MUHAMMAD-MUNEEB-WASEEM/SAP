@@ -237,8 +237,17 @@
               <input id="map_defaultBuyerAddress" placeholder="used only when SAP has none" />
             </label>
             <label>Default sale type<input id="map_defaultSaleType" /></label>
-            <label>Default unit of measure<input id="map_defaultUom" placeholder="Numbers, pieces, units" /></label>
-            <label>Default HS code<input id="map_defaultHsCode" placeholder="0101.2100" /></label>
+            <label>
+              Default unit of measure
+              <input id="map_defaultUom" list="uomList" placeholder="type or pick an FBR unit" />
+            </label>
+            <label>Default HS code<input id="map_defaultHsCode" placeholder="nnnn.nnnn" /></label>
+            <button id="btnLoadUomsSettings" class="btn">Load FBR unit list for autocomplete</button>
+            <p class="hint">
+              These apply to any item that has no value of its own. Fine for sandbox testing; before
+              production every item needs its real classification, because FBR checks the HS code
+              against the sale type.
+            </p>
             <label class="check">
               <input type="checkbox" id="sync_validateBeforePost" />
               Run FBR validation before registering
