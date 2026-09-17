@@ -252,8 +252,16 @@ class SapClient {
    * dialects Service Layer versions expose, and getting that wrong fails the
    * whole query rather than degrading.
    */
-  async listItems({ hsField, uomField, saleTypeField, missingOnly, pageSize = 200, skip = 0 }) {
-    const select = ['ItemCode', 'ItemName', hsField, uomField, saleTypeField]
+  async listItems({
+    hsField,
+    uomField,
+    saleTypeField,
+    missingOnly,
+    pageSize = 200,
+    skip = 0,
+    extraFields = [],
+  }) {
+    const select = ['ItemCode', 'ItemName', hsField, uomField, saleTypeField, ...extraFields]
       .filter(Boolean)
       .join(',');
 

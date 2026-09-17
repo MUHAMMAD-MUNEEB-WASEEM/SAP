@@ -15,7 +15,7 @@
  */
 const { SapClient } = require('./sapClient');
 const { FbrClient } = require('./fbrClient');
-const { buildFbrPayload } = require('./mapper');
+const { buildFbrPayload, extractHsCode } = require('./mapper');
 const { tableGroups } = require('./udfSpecs');
 
 class SyncService {
@@ -264,21 +264,46 @@ class SyncService {
   /** Item master rows for the FBR mapping editor. */
   async listItemsForMapping({ missingOnly = true, skip = 0, pageSize = 200 } = {}) {
     const f = this.config().sapFields;
-    const rows = await this.sapClient().listItems({
+    const base = {
       hsField: f.itemHsCodeField,
       uomField: f.itemUomField,
       saleTypeField: f.itemSaleTypeField,
       missingOnly,
       skip,
       pageSize,
+    };
+
+    // SAP's own inventory / sales unit gives the FBR unit matcher something to
+    // work from. They are standard fields, but a $select naming one that does
+    // not exist fails the whole query - so fall back to the plain select rather
+    // than leaving the user with an opaque OData error.
+    let rows;
+    try {
+      rows = await this.sapClient().listItems({
+        ...base,
+        extraFields: ['InventoryUOM', 'SalesUnit'],
+      });
+    } catch (err) {
+      this.log(`Item list without SAP unit columns (${err.message})`);
+      rows = await this.sapClient().listItems(base);
+    }
+    const extract = this.config().mapping.extractHsFromText !== false;
+    return rows.map((r) => {
+      const rawHs = r[f.itemHsCodeField] || '';
+      const parsed = extract ? extractHsCode(rawHs) : String(rawHs).trim();
+      return {
+        itemCode: r.ItemCode,
+        itemName: r.ItemName,
+        hsCode: parsed || '',
+        // Kept so the grid can show what the source field actually holds when
+        // it is free text - the user needs to see extraction working.
+        hsSource: rawHs && parsed !== rawHs ? rawHs : '',
+        hsUnreadable: !!rawHs && !parsed,
+        uoM: r[f.itemUomField] || '',
+        sapUom: r.SalesUnit || r.InventoryUOM || '',
+        saleType: (f.itemSaleTypeField && r[f.itemSaleTypeField]) || '',
+      };
     });
-    return rows.map((r) => ({
-      itemCode: r.ItemCode,
-      itemName: r.ItemName,
-      hsCode: r[f.itemHsCodeField] || '',
-      uoM: r[f.itemUomField] || '',
-      saleType: r[f.itemSaleTypeField] || '',
-    }));
   }
 
   /**
@@ -293,12 +318,28 @@ class SyncService {
     const f = this.config().sapFields;
     const results = [];
 
+    // Only user-defined fields are ever written. If HS codes are being READ
+    // from a standard field such as the Remarks text (UserText), writing back
+    // to it would replace whatever else that field holds - so those columns are
+    // read-only and the user is told rather than silently losing data.
+    const readOnly = [];
+    const writable = (fieldName, label) => {
+      if (!fieldName) return false;
+      if (/^U_/i.test(fieldName)) return true;
+      if (!readOnly.includes(label)) readOnly.push(`${label} (${fieldName})`);
+      return false;
+    };
+
     for (const row of rows || []) {
       if (!row || !row.itemCode) continue;
       const fields = {};
-      if (row.hsCode !== undefined && row.hsCode !== '') fields[f.itemHsCodeField] = row.hsCode;
-      if (row.uoM !== undefined && row.uoM !== '') fields[f.itemUomField] = row.uoM;
-      if (row.saleType !== undefined && row.saleType !== '' && f.itemSaleTypeField) {
+      if (row.hsCode !== undefined && row.hsCode !== '' && writable(f.itemHsCodeField, 'HS code')) {
+        fields[f.itemHsCodeField] = row.hsCode;
+      }
+      if (row.uoM !== undefined && row.uoM !== '' && writable(f.itemUomField, 'unit of measure')) {
+        fields[f.itemUomField] = row.uoM;
+      }
+      if (row.saleType !== undefined && row.saleType !== '' && writable(f.itemSaleTypeField, 'sale type')) {
         fields[f.itemSaleTypeField] = row.saleType;
       }
       if (!Object.keys(fields).length) continue;
@@ -313,7 +354,16 @@ class SyncService {
 
     const saved = results.filter((r) => r.ok).length;
     this.log(`Item mapping save: ${saved} updated, ${results.length - saved} failed.`);
-    return { attempted: results.length, saved, failed: results.length - saved, results };
+    if (readOnly.length) {
+      this.log(`Skipped read-only standard field(s): ${readOnly.join(', ')}`);
+    }
+    return {
+      attempted: results.length,
+      saved,
+      failed: results.length - saved,
+      readOnly,
+      results,
+    };
   }
 
   /**
@@ -345,12 +395,21 @@ class SyncService {
         const item = await sap.getItem(entry.itemCode);
         const hsCode = item[f.itemHsCodeField] || '';
         const uoM = item[f.itemUomField] || '';
-        if (hsCode && uoM) continue; // already mapped
+        // Judge readiness on the EXTRACTED code: a Remarks field full of text
+        // with no code in it is not a mapped item.
+        const parsedHs =
+          this.config().mapping.extractHsFromText === false
+            ? String(hsCode).trim()
+            : extractHsCode(hsCode);
+        if (parsedHs && uoM) continue; // already mapped
         out.push({
           itemCode: entry.itemCode,
           itemName: item.ItemName || '',
-          hsCode,
+          hsCode: parsedHs || '',
+          hsSource: hsCode && parsedHs !== hsCode ? hsCode : '',
+          hsUnreadable: !!hsCode && !parsedHs,
           uoM,
+          sapUom: item.SalesUnit || item.InventoryUOM || '',
           saleType: (f.itemSaleTypeField && item[f.itemSaleTypeField]) || '',
           usedOn: entry.docNums,
         });

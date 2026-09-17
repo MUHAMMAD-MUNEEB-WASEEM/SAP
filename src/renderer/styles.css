@@ -368,3 +368,16 @@ code { font-family: var(--mono); background: var(--bg-3); padding: 1px 4px; bord
 @media (max-width: 1000px) {
   .grid2, .grid3 { grid-template-columns: 1fr; }
 }
+
+/* Raw value behind an extracted HS code, so extraction is visible not implied. */
+.cell-source {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-dim);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-source.warn { color: var(--warn); }

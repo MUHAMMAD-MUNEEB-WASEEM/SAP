@@ -429,8 +429,24 @@ function renderItems() {
         <td><input type="checkbox" class="itemcheck" data-i="${i}" /></td>
         <td class="mono">${esc(r.itemCode)}</td>
         <td>${esc(r.itemName || '')}</td>
-        <td><input class="cell" data-i="${i}" data-k="hsCode" value="${esc(r.hsCode || '')}" placeholder="not set" /></td>
-        <td><input class="cell" data-i="${i}" data-k="uoM" list="uomList" value="${esc(r.uoM || '')}" /></td>
+        <td>
+          <input class="cell" data-i="${i}" data-k="hsCode" value="${esc(r.hsCode || '')}" placeholder="not set" />
+          ${
+            r.hsSource
+              ? `<div class="cell-source" title="Value read from the source field">from: ${esc(r.hsSource)}</div>`
+              : ''
+          }
+          ${
+            r.hsUnreadable
+              ? '<div class="cell-source warn">no HS code found in the source field</div>'
+              : ''
+          }
+        </td>
+        <td class="mono muted">${esc(r.sapUom || '—')}</td>
+        <td>
+          <input class="cell" data-i="${i}" data-k="uoM" list="uomList" value="${esc(r.uoM || '')}" placeholder="not set" />
+          ${r.uomReason ? `<div class="cell-source">${esc(r.uomReason)}</div>` : ''}
+        </td>
         <td><input class="cell" data-i="${i}" data-k="saleType" value="${esc(r.saleType || '')}" /></td>
         <td class="muted">${esc((r.usedOn || []).join(', '))}</td>
       </tr>`;
@@ -578,6 +594,59 @@ $('hsResults').addEventListener('click', (e) => {
   showItemsAlert(
     `HS code ${hit.dataset.code} put in the “Fill selected” box. Tick the rows it applies to, then press “Apply to selected rows”.`,
     'ok'
+  );
+});
+
+/* Propose an FBR unit for every row, from SAP's own unit code. */
+let uomOptions = null;
+
+async function ensureUomOptions() {
+  if (uomOptions) return uomOptions;
+  const list = await call(window.api.fbr.reference('uom', {}), 'FBR unit-of-measure list');
+  if (!list) return null;
+  uomOptions = Array.isArray(list) ? list : [];
+  $('uomList').innerHTML = uomOptions
+    .map((u) => `<option value="${esc(u.description || u.uoM || u.uom || String(u))}"></option>`)
+    .join('');
+  return uomOptions;
+}
+
+$('btnMatchUoms').addEventListener('click', async () => {
+  if (!itemRows.length) return showItemsAlert('Load some items first.', 'warn');
+
+  const options = await ensureUomOptions();
+  if (!options) return;
+
+  const matched = await call(
+    window.api.items.matchUnits({ rows: itemRows.map((r) => ({ itemCode: r.itemCode, sapUom: r.sapUom })), options }),
+    'Match units'
+  );
+  if (!matched) return;
+
+  const byCode = new Map(matched.map((m) => [m.itemCode, m]));
+  let filled = 0;
+  let unmatched = 0;
+  for (const row of itemRows) {
+    if (row.uoM) continue; // never overwrite a unit already set
+    const m = byCode.get(row.itemCode);
+    if (m && m.value) {
+      row.uoM = m.value;
+      row.uomReason = m.reason;
+      row._dirty = true;
+      filled++;
+    } else if (row.sapUom) {
+      unmatched++;
+    }
+  }
+  renderItems();
+
+  showItemsAlert(
+    filled
+      ? `Proposed a unit for ${filled} item(s)${
+          unmatched ? `; ${unmatched} could not be matched and are left blank` : ''
+        }. Review them, then press “Save changes to SAP”.`
+      : 'No units could be proposed. Set one with “Fill selected” instead.',
+    filled ? 'ok' : 'warn'
   );
 });
 

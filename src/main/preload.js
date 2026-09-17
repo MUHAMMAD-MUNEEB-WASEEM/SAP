@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
     list: (opts) => invoke('items:list', opts),
     blocking: (filters) => invoke('items:blocking', filters),
     save: (rows) => invoke('items:save', rows),
+    matchUnits: (payload) => invoke('items:matchUnits', payload),
     exportCsv: (rows) => invoke('items:exportCsv', rows),
     importCsv: () => invoke('items:importCsv'),
   },

@@ -42,6 +42,159 @@ function toIsoDate(value) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Pull an HS code out of a field that may hold free text.
+ *
+ * Sites commonly keep the code in a general-purpose field such as the item
+ * master's Remarks (OITM.UserText), where it sits alongside other notes:
+ * "HS Code: 4819.1000", "4819.1000 - 5 ply", or just the bare digits. FBR wants
+ * the canonical nnnn.nnnn form, so the code is located and normalised rather
+ * than the whole field being sent.
+ *
+ * Returns null when no code can be found, which the caller reports as a
+ * mapping error - guessing from partial digits would risk misclassifying goods
+ * on a government filing.
+ */
+function extractHsCode(raw) {
+  if (raw === undefined || raw === null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+
+  // Canonical form, e.g. 4819.1000
+  const full = s.match(/(?<!\d)(\d{4})\.(\d{4})(?!\d)/);
+  if (full) return `${full[1]}.${full[2]}`;
+
+  // Eight bare digits, e.g. 48191000
+  const bare = s.match(/(?<!\d)(\d{8})(?!\d)/);
+  if (bare) return `${bare[1].slice(0, 4)}.${bare[1].slice(4)}`;
+
+  // Six-digit heading, e.g. 4819.10 - passed through as found rather than
+  // padded, since inventing the last two digits would change the classification.
+  const short = s.match(/(?<!\d)(\d{4})\.(\d{2})(?!\d)/);
+  if (short) return `${short[1]}.${short[2]}`;
+
+  return null;
+}
+
+/**
+ * SAP unit codes that mean the same thing as an FBR unit.
+ *
+ * Values on the right are matched against FBR's published list rather than
+ * being sent as-is, so a synonym can only ever resolve to a unit FBR actually
+ * recognises. Anything unmatched is left for the user rather than guessed.
+ */
+const UOM_SYNONYMS = {
+  // counted goods - cartons, boxes and the like are sold by the piece
+  pcs: 'numbers, pieces, units',
+  pc: 'numbers, pieces, units',
+  pce: 'numbers, pieces, units',
+  piece: 'numbers, pieces, units',
+  pieces: 'numbers, pieces, units',
+  ea: 'numbers, pieces, units',
+  each: 'numbers, pieces, units',
+  no: 'numbers, pieces, units',
+  nos: 'numbers, pieces, units',
+  num: 'numbers, pieces, units',
+  number: 'numbers, pieces, units',
+  numbers: 'numbers, pieces, units',
+  unit: 'numbers, pieces, units',
+  units: 'numbers, pieces, units',
+  ctn: 'numbers, pieces, units',
+  carton: 'numbers, pieces, units',
+  cartons: 'numbers, pieces, units',
+  box: 'numbers, pieces, units',
+  bag: 'numbers, pieces, units',
+  set: 'numbers, pieces, units',
+  // weight
+  kg: 'kg',
+  kgs: 'kg',
+  kilo: 'kg',
+  kilogram: 'kg',
+  kilograms: 'kg',
+  g: 'gram',
+  gm: 'gram',
+  gram: 'gram',
+  grams: 'gram',
+  ton: 'ton',
+  tons: 'ton',
+  tonne: 'ton',
+  mt: 'ton',
+  // volume and length
+  l: 'litre',
+  ltr: 'litre',
+  lit: 'litre',
+  litre: 'litre',
+  liter: 'litre',
+  litres: 'litre',
+  m: 'meter',
+  mtr: 'meter',
+  meter: 'meter',
+  metre: 'meter',
+  meters: 'meter',
+  sqm: 'square metre',
+  m2: 'square metre',
+  sqft: 'square foot',
+  ft2: 'square foot',
+  sft: 'square foot',
+  cbm: 'cubic metre',
+  m3: 'cubic metre',
+  // energy
+  kwh: 'kwh',
+};
+
+const normaliseUomKey = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+/**
+ * Propose an FBR unit for a SAP unit code, choosing only from FBR's own list.
+ *
+ * @param {string} sapUom            e.g. "PCS"
+ * @param {Array<{description:string}>} fbrList  from /pdi/v1/uom
+ * @param {object} [customMap]       site overrides, SAP code -> FBR description
+ * @returns {{value:string, reason:string}|null}
+ */
+function matchUom(sapUom, fbrList, customMap) {
+  const raw = String(sapUom || '').trim();
+  if (!raw) return null;
+
+  const options = (Array.isArray(fbrList) ? fbrList : [])
+    .map((u) => (typeof u === 'string' ? u : u.description || u.uoM || u.uom || ''))
+    .filter(Boolean);
+  if (!options.length) return null;
+
+  // 1. An explicit site mapping always wins.
+  if (customMap) {
+    const custom = customMap[raw] || customMap[raw.toLowerCase()];
+    if (custom) {
+      const exact = options.find((o) => o.toLowerCase() === String(custom).toLowerCase());
+      return { value: exact || custom, reason: 'configured mapping' };
+    }
+  }
+
+  const key = normaliseUomKey(raw);
+
+  // 2. The SAP code already names an FBR unit.
+  const direct = options.find((o) => normaliseUomKey(o) === key);
+  if (direct) return { value: direct, reason: 'exact match' };
+
+  // 3. A known synonym, resolved against the real list.
+  const synonym = UOM_SYNONYMS[key];
+  if (synonym) {
+    const hit =
+      options.find((o) => o.toLowerCase() === synonym) ||
+      options.find((o) => normaliseUomKey(o) === normaliseUomKey(synonym));
+    if (hit) return { value: hit, reason: `"${raw}" recognised as ${hit}` };
+  }
+
+  // 4. The FBR description starts with the SAP code, e.g. "KG" -> "KG".
+  const prefix = options.find((o) => normaliseUomKey(o).startsWith(key) && key.length >= 2);
+  if (prefix) return { value: prefix, reason: 'partial match — check this one' };
+
+  return null;
+}
+
 /** FBR expects the rate as a descriptor string, e.g. "18%" or "Exempt". */
 function formatRate(value, cfg) {
   if (value === undefined || value === null || value === '') return null;
@@ -212,6 +365,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   // with ten lines of the same unmapped product is one thing to fix, not ten,
   // and reporting it per line obscures that the fix lives on the item master.
   const missingHsCode = new Map();
+  const unreadableHsCode = new Map();
   const missingUom = new Map();
   const missingSaleType = new Map();
   const noteMissing = (bucket, key, lineNo) => {
@@ -229,18 +383,37 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     const description =
       pick(line, ['ItemDescription', 'Dscription', 'Text'], '') || itemCode || `Line ${n}`;
 
-    const hsCode =
+    const rawHsCode =
       override.hsCode ||
       pick(itemMaster, [f.itemHsCodeField || 'U_FBR_HSCode'], null) ||
       pick(line, [f.lineHsCodeField || 'U_FBR_HSCode'], null) ||
       map.defaultHsCode ||
       null;
-    if (!hsCode) noteMissing(missingHsCode, label, n);
 
+    // The source field may be free text (Remarks, a description), so the code
+    // is extracted unless extraction has been explicitly turned off.
+    let hsCode = null;
+    if (rawHsCode) {
+      hsCode =
+        map.extractHsFromText === false
+          ? String(rawHsCode).trim()
+          : extractHsCode(rawHsCode);
+      if (!hsCode) noteMissing(unreadableHsCode, `${label} → "${truncateText(rawHsCode, 40)}"`, n);
+    } else {
+      noteMissing(missingHsCode, label, n);
+    }
+
+    // SAP's own unit is consulted through the site mapping table only - it is
+    // a local code like "PCS", never an FBR unit, so it is never sent raw.
+    const sapUnit = pick(
+      line,
+      ['MeasureUnit', 'UoMCode', 'UoMEntry'],
+      pick(itemMaster, ['SalesUnit', 'InventoryUOM'], null)
+    );
     const uoM =
       override.uoM ||
       pick(itemMaster, [f.itemUomField || 'U_FBR_UOM'], null) ||
-      mapUom(pick(line, ['MeasureUnit', 'UoMCode', 'UoMEntry'], null), map.uom) ||
+      mapUom(sapUnit, map.uom) ||
       map.defaultUom ||
       null;
     if (!uoM) noteMissing(missingUom, label, n);
@@ -317,6 +490,15 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       } on the item master — once per product, not per invoice. Use the Item mapping tab.`
     );
   }
+  if (unreadableHsCode.size) {
+    errors.push(
+      `${unreadableHsCode.size} item(s) have text in ${
+        f.itemHsCodeField || 'U_FBR_HSCode'
+      } but no HS code could be read from it: ${describeMissing(
+        unreadableHsCode
+      )}. An HS code looks like 4819.1000.`
+    );
+  }
   if (missingUom.size) {
     errors.push(
       `${missingUom.size} item(s) have no FBR unit of measure: ${describeMissing(missingUom)}. Set ${
@@ -356,6 +538,11 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
  * most a handful of item codes so one bad import does not produce an
  * unreadable wall of text.
  */
+function truncateText(value, max) {
+  const s = String(value).replace(/\s+/g, ' ').trim();
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
 function describeMissing(bucket, limit = 8) {
   const entries = [...bucket.entries()];
   const shown = entries
@@ -421,6 +608,9 @@ function mapUom(sapUom, uomMap) {
 
 module.exports = {
   buildFbrPayload,
+  extractHsCode,
+  matchUom,
+  UOM_SYNONYMS,
   toIsoDate,
   formatRate,
   normaliseProvince,

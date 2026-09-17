@@ -89,6 +89,7 @@
           <input id="bulkUom" list="uomList" placeholder="Unit of measure" />
           <input id="bulkSaleType" placeholder="Sale type" />
           <button id="btnBulkFill" class="btn">Apply to selected rows</button>
+          <button id="btnMatchUoms" class="btn btn-primary">Match units from SAP</button>
           <button id="btnLoadUoms" class="btn btn-ghost">Load FBR UoM list</button>
         </div>
         <datalist id="uomList"></datalist>
@@ -125,7 +126,8 @@
                 <th>Item code</th>
                 <th>Description</th>
                 <th>HS code</th>
-                <th>Unit of measure</th>
+                <th>SAP unit</th>
+                <th>FBR unit of measure</th>
                 <th>Sale type</th>
                 <th>Used on</th>
               </tr>
@@ -244,6 +246,12 @@
             <p class="hint">
               These must match the UDFs created in SAP. See
               <code>scripts/sap-udf-setup.md</code> for the exact definitions.
+            </p>
+            <p class="hint">
+              A standard SAP field can be named here instead of a UDF — for example
+              <code>UserText</code> to read HS codes from the item master's Remarks. The code is
+              extracted from free text, and standard fields are treated as read-only so the app can
+              never overwrite what else they hold.
             </p>
             <div class="grid3">
               <label>Invoice — FBR number<input id="f_irnField" /></label>

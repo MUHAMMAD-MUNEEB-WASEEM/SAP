@@ -6,7 +6,14 @@
  *   node scripts/selftest.js
  */
 const assert = require('node:assert');
-const { buildFbrPayload, toIsoDate, normaliseProvince, formatRate } = require('../src/main/mapper');
+const {
+  buildFbrPayload,
+  toIsoDate,
+  normaliseProvince,
+  formatRate,
+  extractHsCode,
+  matchUom,
+} = require('../src/main/mapper');
 const { interpretResponse } = require('../src/main/fbrClient');
 const { sapErrorCode, describeSapError, LOGIN_HINTS } = require('../src/main/sapClient');
 
@@ -211,6 +218,133 @@ test('a total that disagrees with DocTotal raises a warning, not an error', () =
   assert.ok(payload, 'payload should still be produced');
   assert.ok(warnings.some((w) => /differs from SAP DocTotal/i.test(w)));
 });
+
+console.log('\nmapper — HS code extraction from free text');
+
+test('an HS code is found inside free-text remarks', () => {
+  assert.strictEqual(extractHsCode('4819.1000'), '4819.1000');
+  assert.strictEqual(extractHsCode('  4819.1000  '), '4819.1000');
+  assert.strictEqual(extractHsCode('HS Code: 4819.1000'), '4819.1000');
+  assert.strictEqual(extractHsCode('4819.1000 - CARTON 5 PLY'), '4819.1000');
+  assert.strictEqual(extractHsCode('Corrugated carton (hs 4819.1000), 5-ply'), '4819.1000');
+});
+
+test('bare eight-digit codes are normalised', () => {
+  assert.strictEqual(extractHsCode('48191000'), '4819.1000');
+  assert.strictEqual(extractHsCode('HS 48191000 5ply'), '4819.1000');
+});
+
+test('a six-digit heading is passed through, never padded', () => {
+  // Inventing the last two digits would change the tariff classification.
+  assert.strictEqual(extractHsCode('4819.10'), '4819.10');
+});
+
+test('free text with no code returns null rather than a guess', () => {
+  assert.strictEqual(extractHsCode('CARTON 31 x 23 x 12.75" 5-PLY CBB/P+S/S+S/ND'), null);
+  assert.strictEqual(extractHsCode('no code here'), null);
+  assert.strictEqual(extractHsCode(''), null);
+  assert.strictEqual(extractHsCode(null), null);
+});
+
+test('dimensions in a description are not mistaken for a code', () => {
+  // "705 x 400 x 530MM" and "31 x 23 x 12.75" must not yield an HS code.
+  assert.strictEqual(extractHsCode('CARTON 705 x 400 x 530MM'), null);
+  assert.strictEqual(extractHsCode('CARTON 13 x 12 x 10" 5-PLY'), null);
+});
+
+test('an item whose source field holds no readable code is reported distinctly', () => {
+  const remarksItems = new Map([
+    ['ITEM01', { ItemCode: 'ITEM01', UserText: 'CARTON 5-PLY, no code', U_FBR_UOM: 'Numbers, pieces, units', U_FBR_SaleType: 'Goods at standard rate (default)' }],
+  ]);
+  const cfg = { ...config, sapFields: { ...config.sapFields, itemHsCodeField: 'UserText' } };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items: remarksItems, config: cfg });
+  assert.strictEqual(r.payload, null);
+  assert.ok(
+    r.errors.some((e) => /no HS code could be read from it/i.test(e)),
+    `expected an unreadable-source error, got: ${r.errors.join(' | ')}`
+  );
+});
+
+test('reading the HS code from the Remarks field produces a valid payload', () => {
+  const remarksItems = new Map([
+    ['ITEM01', { ItemCode: 'ITEM01', UserText: 'HS Code: 4819.1000 (corrugated)', U_FBR_UOM: 'Numbers, pieces, units', U_FBR_SaleType: 'Goods at standard rate (default)' }],
+  ]);
+  const cfg = { ...config, sapFields: { ...config.sapFields, itemHsCodeField: 'UserText' } };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items: remarksItems, config: cfg });
+  assert.deepStrictEqual(r.errors, [], `unexpected errors: ${r.errors.join(' | ')}`);
+  assert.strictEqual(r.payload.items[0].hsCode, '4819.1000');
+});
+
+console.log('\nmapper — unit of measure matching');
+
+const FBR_UOMS = [
+  { uoM_ID: 1, description: 'Numbers, pieces, units' },
+  { uoM_ID: 13, description: 'KG' },
+  { uoM_ID: 77, description: 'Square Metre' },
+  { uoM_ID: 5, description: 'Litre' },
+  { uoM_ID: 9, description: 'Meter' },
+];
+
+test('common SAP unit codes resolve to FBR units', () => {
+  assert.strictEqual(matchUom('PCS', FBR_UOMS).value, 'Numbers, pieces, units');
+  assert.strictEqual(matchUom('CTN', FBR_UOMS).value, 'Numbers, pieces, units');
+  assert.strictEqual(matchUom('EA', FBR_UOMS).value, 'Numbers, pieces, units');
+  assert.strictEqual(matchUom('kgs', FBR_UOMS).value, 'KG');
+  assert.strictEqual(matchUom('LTR', FBR_UOMS).value, 'Litre');
+  assert.strictEqual(matchUom('SQM', FBR_UOMS).value, 'Square Metre');
+});
+
+test('a unit already naming an FBR value matches exactly', () => {
+  assert.strictEqual(matchUom('KG', FBR_UOMS).reason, 'exact match');
+  assert.strictEqual(matchUom('Numbers, pieces, units', FBR_UOMS).value, 'Numbers, pieces, units');
+});
+
+test('a configured mapping beats the built-in synonyms', () => {
+  const m = matchUom('PCS', FBR_UOMS, { PCS: 'KG' });
+  assert.strictEqual(m.value, 'KG');
+  assert.strictEqual(m.reason, 'configured mapping');
+});
+
+test('an unknown unit is left for the user rather than guessed', () => {
+  assert.strictEqual(matchUom('WIDGET', FBR_UOMS), null);
+  assert.strictEqual(matchUom('', FBR_UOMS), null);
+});
+
+test('nothing is proposed when FBR returned no list', () => {
+  // Never fabricate a unit FBR has not published.
+  assert.strictEqual(matchUom('PCS', []), null);
+  assert.strictEqual(matchUom('PCS', null), null);
+});
+
+test('the invoice line unit resolves through the site mapping table', () => {
+  const noUomItems = new Map([
+    ['ITEM01', { ItemCode: 'ITEM01', U_FBR_HSCode: '4819.1000', U_FBR_SaleType: 'Goods at standard rate (default)' }],
+  ]);
+  const inv = JSON.parse(JSON.stringify(invoice));
+  inv.DocumentLines[0].MeasureUnit = 'PCS';
+  const cfg = {
+    ...config,
+    mapping: { ...config.mapping, uom: { PCS: 'Numbers, pieces, units' } },
+  };
+  const r = buildFbrPayload({ invoice: inv, businessPartner: bp, items: noUomItems, config: cfg });
+  assert.deepStrictEqual(r.errors, [], `unexpected errors: ${r.errors.join(' | ')}`);
+  assert.strictEqual(r.payload.items[0].uoM, 'Numbers, pieces, units');
+});
+
+test('a configured default unit unblocks items with nothing else set', () => {
+  const noUomItems = new Map([
+    ['ITEM01', { ItemCode: 'ITEM01', U_FBR_HSCode: '4819.1000', U_FBR_SaleType: 'Goods at standard rate (default)' }],
+  ]);
+  const cfg = {
+    ...config,
+    mapping: { ...config.mapping, defaultUom: 'Numbers, pieces, units' },
+  };
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items: noUomItems, config: cfg });
+  assert.deepStrictEqual(r.errors, [], `unexpected errors: ${r.errors.join(' | ')}`);
+  assert.strictEqual(r.payload.items[0].uoM, 'Numbers, pieces, units');
+});
+
+console.log('\nmapper — consolidated reporting');
 
 test('missing master data is reported per item, not per line', () => {
   // Four lines of the SAME unmapped product is one thing to fix, not four.

@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const { ConfigStore } = require('./config');
 const { Store } = require('./store');
 const { SyncService } = require('./sync');
+const { matchUom } = require('./mapper');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const CONFIG_PATH = path.join(PROJECT_ROOT, 'config', 'config.json');
@@ -288,6 +289,14 @@ function registerHandlers() {
   handle('items:list', async (opts) => sync.listItemsForMapping(opts || {}));
 
   handle('items:blocking', async (filters) => sync.itemsBlockingInvoices(filters || {}));
+
+  handle('items:matchUnits', async ({ rows, options }) => {
+    const customMap = configStore.config.mapping.uom;
+    return (rows || []).map((r) => {
+      const m = matchUom(r.sapUom, options, customMap);
+      return { itemCode: r.itemCode, value: m ? m.value : '', reason: m ? m.reason : '' };
+    });
+  });
 
   handle('items:save', async (rows) => {
     log(`Writing FBR mapping to ${(rows || []).length} item(s)…`);
