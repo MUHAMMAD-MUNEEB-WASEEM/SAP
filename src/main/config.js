@@ -69,6 +69,7 @@ const DEFAULTS = {
     defaultBuyerAddress: '',
     defaultSellerAddress: '',
     extractHsFromText: true,
+    autoScenarioByBuyer: true,
     defaultSaleType: 'Goods at standard rate (default)',
     defaultUom: '',
     defaultHsCode: '',

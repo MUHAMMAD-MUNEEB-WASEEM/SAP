@@ -524,21 +524,56 @@ test('backslashes are folded too', () => {
 
 console.log('\nmapper — consistency pre-flight checks');
 
-test('a scenario meant for registered buyers warns on an unregistered one', () => {
-  const unregistered = { ...bp, FederalTaxID: '', U_FBR_RegType: 'Unregistered' };
-  const r = buildFbrPayload({ invoice, businessPartner: unregistered, items, config });
-  assert.ok(r.payload, 'an unregistered buyer needs no NTN');
-  assert.ok(
-    r.warnings.some((w) => /SN001 is for sales to REGISTERED buyers/i.test(w)),
-    `expected a scenario mismatch warning, got: ${r.warnings.join(' | ')}`
-  );
+const unregisteredBp = { ...bp, FederalTaxID: '', U_FBR_RegType: 'Unregistered' };
+
+test('SN001 is switched to SN002 for an unregistered buyer', () => {
+  // FBR rejects the mismatch with 0205; the pair differ only by this flag.
+  const r = buildFbrPayload({ invoice, businessPartner: unregisteredBp, items, config });
+  assert.strictEqual(r.payload.scenarioId, 'SN002');
+  assert.ok(r.warnings.some((w) => /switched from SN001 to SN002/i.test(w)));
 });
 
-test('the matching scenario produces no mismatch warning', () => {
-  const unregistered = { ...bp, FederalTaxID: '', U_FBR_RegType: 'Unregistered' };
+test('SN002 is switched to SN001 for a registered buyer', () => {
   const cfg = { ...config, mapping: { ...config.mapping, defaultScenarioId: 'SN002' } };
-  const r = buildFbrPayload({ invoice, businessPartner: unregistered, items, config: cfg });
-  assert.ok(!r.warnings.some((w) => /matching scenario/i.test(w)));
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: cfg });
+  assert.strictEqual(r.payload.scenarioId, 'SN001');
+});
+
+test('an already-correct scenario is left alone and unremarked', () => {
+  const cfg = { ...config, mapping: { ...config.mapping, defaultScenarioId: 'SN002' } };
+  const r = buildFbrPayload({ invoice, businessPartner: unregisteredBp, items, config: cfg });
+  assert.strictEqual(r.payload.scenarioId, 'SN002');
+  assert.ok(!r.warnings.some((w) => /switched from/i.test(w)));
+});
+
+test('no other scenario is ever switched', () => {
+  // SN005 encodes a goods category; the buyer's status says nothing about it.
+  const cfg = { ...config, mapping: { ...config.mapping, defaultScenarioId: 'SN005' } };
+  const r = buildFbrPayload({ invoice, businessPartner: unregisteredBp, items, config: cfg });
+  assert.strictEqual(r.payload.scenarioId, 'SN005');
+  assert.ok(!r.warnings.some((w) => /switched from/i.test(w)));
+});
+
+test('with the switch disabled, the mismatch is warned about instead', () => {
+  const cfg = { ...config, mapping: { ...config.mapping, autoScenarioByBuyer: false } };
+  const r = buildFbrPayload({ invoice, businessPartner: unregisteredBp, items, config: cfg });
+  assert.strictEqual(r.payload.scenarioId, 'SN001', 'the configured value must be sent as-is');
+  assert.ok(r.warnings.some((w) => /0205/.test(w)), 'the user must be told what FBR will say');
+});
+
+test('an invoice-level scenario override is still corrected', () => {
+  const withOverride = { ...invoice, U_FBR_ScenarioId: 'SN001' };
+  const cfg = {
+    ...config,
+    sapFields: { ...config.sapFields, scenarioField: 'U_FBR_ScenarioId' },
+  };
+  const r = buildFbrPayload({
+    invoice: withOverride,
+    businessPartner: unregisteredBp,
+    items,
+    config: cfg,
+  });
+  assert.strictEqual(r.payload.scenarioId, 'SN002');
 });
 
 test('a standard-rate line carrying no tax is flagged', () => {

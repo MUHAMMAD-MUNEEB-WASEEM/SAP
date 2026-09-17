@@ -145,7 +145,7 @@ const UOM_SYNONYMS = {
 const normaliseUomKey = (s) =>
   String(s || '')
     .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 
 /**
  * Propose an FBR unit for a SAP unit code, choosing only from FBR's own list.
@@ -359,29 +359,37 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
 
   // scenarioId is a sandbox-only requirement, so it is attached only there.
   if (config.fbr && config.fbr.environment === 'sandbox') {
-    const scenarioId =
+    let scenarioId =
       pick(invoice, [f.scenarioField || 'U_FBR_ScenarioId'], null) || map.defaultScenarioId;
     if (!scenarioId) {
       errors.push(
         'Sandbox submissions require a scenarioId (e.g. SN001). Set a default under Settings -> Mapping, or populate the invoice UDF.'
       );
     } else {
-      payload.scenarioId = scenarioId;
+      // SN001 and SN002 are the same scenario split only by whether the buyer
+      // is registered, so the right one is a per-invoice fact, not a setting.
+      // FBR rejects the wrong one with 0205; picking it here avoids a round
+      // trip and means a mixed batch does not need splitting by hand.
+      //
+      // Only this pair is ever swapped. Every other scenario encodes a sector
+      // or a goods category that the buyer's status says nothing about.
+      const wanted = isRegisteredBuyer ? 'SN001' : 'SN002';
+      const isBasicPair = scenarioId === 'SN001' || scenarioId === 'SN002';
 
-      // SN001 is "to registered buyers", SN002 "to unregistered". Sending the
-      // wrong one for this buyer is a rejection FBR only reports after the
-      // round trip, so it is caught here.
-      const wantsRegistered = scenarioId === 'SN001';
-      const wantsUnregistered = scenarioId === 'SN002';
-      if (wantsRegistered && !isRegisteredBuyer) {
+      if (isBasicPair && scenarioId !== wanted && map.autoScenarioByBuyer !== false) {
         warnings.push(
-          'Scenario SN001 is for sales to REGISTERED buyers, but this buyer is Unregistered. SN002 is the matching scenario.'
+          `Scenario switched from ${scenarioId} to ${wanted}: this buyer is ${buyerRegistrationType}, and SN001/SN002 differ only by that. Turn this off under Settings -> Mapping if you need the configured value sent as-is.`
         );
-      } else if (wantsUnregistered && isRegisteredBuyer) {
+        scenarioId = wanted;
+      } else if (isBasicPair && scenarioId !== wanted) {
         warnings.push(
-          'Scenario SN002 is for sales to UNREGISTERED buyers, but this buyer is Registered. SN001 is the matching scenario.'
+          `Scenario ${scenarioId} is for ${
+            scenarioId === 'SN001' ? 'REGISTERED' : 'UNREGISTERED'
+          } buyers, but this buyer is ${buyerRegistrationType}. FBR rejects this with error 0205; ${wanted} is the matching scenario.`
         );
       }
+
+      payload.scenarioId = scenarioId;
     }
   }
 
@@ -699,7 +707,7 @@ function sanitizeText(value) {
   if (value === undefined || value === null) return '';
   return String(value)
     // eslint-disable-next-line no-control-regex
-    .replace(/[ --]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/[‘’‛]/g, "'")
     .replace(/[“”‟]/g, "'")

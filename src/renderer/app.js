@@ -130,6 +130,7 @@ function fillForm(config_) {
   $('seller_address').value = seller.address || '';
 
   $('map_defaultScenarioId').value = mapping.defaultScenarioId || 'SN001';
+  $('map_autoScenarioByBuyer').checked = mapping.autoScenarioByBuyer !== false;
   $('map_defaultProvince').value = mapping.defaultProvince || '';
   $('map_defaultBuyerAddress').value = mapping.defaultBuyerAddress || '';
   $('map_defaultSellerAddress').value = mapping.defaultSellerAddress || '';
@@ -186,6 +187,7 @@ function readForm() {
     },
     mapping: {
       defaultScenarioId: $('map_defaultScenarioId').value,
+      autoScenarioByBuyer: $('map_autoScenarioByBuyer').checked,
       defaultProvince: $('map_defaultProvince').value,
       defaultBuyerAddress: $('map_defaultBuyerAddress').value.trim(),
       defaultSellerAddress: $('map_defaultSellerAddress').value.trim(),

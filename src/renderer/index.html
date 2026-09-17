@@ -234,6 +234,15 @@
               Used only when the business partner has no usable province. Every invoice that relies
               on it is flagged with a warning, because the province affects the filing.
             </p>
+            <label class="check">
+              <input type="checkbox" id="map_autoScenarioByBuyer" />
+              Pick SN001 / SN002 automatically from the buyer
+            </label>
+            <p class="hint">
+              These two scenarios differ only by whether the buyer is registered, so the right one is
+              a per-invoice fact. FBR rejects the wrong one with error 0205. No other scenario is
+              ever changed.
+            </p>
             <label>Default sale type<input id="map_defaultSaleType" /></label>
             <label>
               Default unit of measure
