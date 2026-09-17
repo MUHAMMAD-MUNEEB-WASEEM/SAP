@@ -67,7 +67,10 @@ class FbrClient {
     }
     return {
       Authorization: `Bearer ${this.cfg.token}`,
-      'Content-Type': 'application/json',
+      // The charset is explicit: without it a strict receiver may decode the
+      // body as ISO-8859-1, and any multi-byte character then arrives as
+      // mojibake or breaks parsing outright.
+      'Content-Type': 'application/json; charset=utf-8',
     };
   }
 

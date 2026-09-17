@@ -13,6 +13,7 @@ const {
   formatRate,
   extractHsCode,
   matchUom,
+  sanitizeText,
 } = require('../src/main/mapper');
 const { interpretResponse } = require('../src/main/fbrClient');
 const { sapErrorCode, describeSapError, LOGIN_HINTS, SapClient } = require('../src/main/sapClient');
@@ -457,6 +458,99 @@ test('a configured default unit unblocks items with nothing else set', () => {
   const r = buildFbrPayload({ invoice, businessPartner: bp, items: noUomItems, config: cfg });
   assert.deepStrictEqual(r.errors, [], `unexpected errors: ${r.errors.join(' | ')}`);
   assert.strictEqual(r.payload.items[0].uoM, 'Numbers, pieces, units');
+});
+
+console.log('\nmapper — payload is safe to serialise');
+
+test('control characters never reach the payload', () => {
+  const dirty = {
+    ...invoice,
+    CardName: 'GLAXO  SMITHKLINE',
+    Address: 'DOCKYARD ROAD\r\r \rKARACHI',
+    DocumentLines: [
+      {
+        ItemCode: 'ITEM01',
+        ItemDescription: 'CARTON 31 x 23 x 12.75" 5-PLY\r\nCBB/P+S',
+        Quantity: 1,
+        UnitPrice: 1000,
+        LineTotal: 1000,
+        TaxPercentagePerRow: 18,
+      },
+    ],
+  };
+  const r = buildFbrPayload({ invoice: dirty, businessPartner: bp, items, config });
+  const json = JSON.stringify(r.payload);
+  assert.ok(!/[ -]/.test(json), 'no control characters may be serialised');
+  assert.strictEqual(JSON.stringify(JSON.parse(json)), json, 'payload must round-trip');
+  assert.strictEqual(r.payload.buyerBusinessName, 'GLAXO SMITHKLINE');
+  assert.strictEqual(r.payload.items[0].productDescription, "CARTON 31 x 23 x 12.75' 5-PLY CBB/P+S");
+});
+
+test('exotic punctuation is folded to ASCII', () => {
+  assert.strictEqual(sanitizeText('smart “quotes” and —dash'), "smart 'quotes' and -dash");
+  assert.strictEqual(sanitizeText('non breaking'), 'non breaking');
+  assert.strictEqual(sanitizeText('tab\there'), 'tab here');
+  assert.strictEqual(sanitizeText('NUL here'), 'NULhere');
+});
+
+test('the payload contains no JSON escape sequences at all', () => {
+  // FBR's gateway answers "Requested JSON in Malformed" to a body containing
+  // an escaped quote, even though the escaping is valid. The real failing
+  // description from invoice 9170 is the fixture.
+  const dirty = {
+    ...invoice,
+    DocumentLines: [
+      {
+        ItemCode: 'ITEM01',
+        ItemDescription: 'KRAFT 12 x 12 x 7.5" 5 PLY',
+        Quantity: 963,
+        UnitPrice: 70,
+        LineTotal: 67410,
+        TaxPercentagePerRow: 18,
+      },
+    ],
+  };
+  const r = buildFbrPayload({ invoice: dirty, businessPartner: bp, items, config });
+  const json = JSON.stringify(r.payload);
+  assert.ok(!json.includes('\\"'), 'no escaped double quotes may be serialised');
+  assert.ok(!json.includes('\\\\'), 'no escaped backslashes may be serialised');
+  assert.strictEqual(r.payload.items[0].productDescription, "KRAFT 12 x 12 x 7.5' 5 PLY");
+});
+
+test('backslashes are folded too', () => {
+  assert.strictEqual(sanitizeText('A\\B'), 'A/B');
+  assert.strictEqual(sanitizeText('say "hi"'), "say 'hi'");
+});
+
+console.log('\nmapper — consistency pre-flight checks');
+
+test('a scenario meant for registered buyers warns on an unregistered one', () => {
+  const unregistered = { ...bp, FederalTaxID: '', U_FBR_RegType: 'Unregistered' };
+  const r = buildFbrPayload({ invoice, businessPartner: unregistered, items, config });
+  assert.ok(r.payload, 'an unregistered buyer needs no NTN');
+  assert.ok(
+    r.warnings.some((w) => /SN001 is for sales to REGISTERED buyers/i.test(w)),
+    `expected a scenario mismatch warning, got: ${r.warnings.join(' | ')}`
+  );
+});
+
+test('the matching scenario produces no mismatch warning', () => {
+  const unregistered = { ...bp, FederalTaxID: '', U_FBR_RegType: 'Unregistered' };
+  const cfg = { ...config, mapping: { ...config.mapping, defaultScenarioId: 'SN002' } };
+  const r = buildFbrPayload({ invoice, businessPartner: unregistered, items, config: cfg });
+  assert.ok(!r.warnings.some((w) => /matching scenario/i.test(w)));
+});
+
+test('a standard-rate line carrying no tax is flagged', () => {
+  const untaxed = JSON.parse(JSON.stringify(invoice));
+  untaxed.DocumentLines[0].TaxPercentagePerRow = 0;
+  untaxed.DocTotal = 1000;
+  const r = buildFbrPayload({ invoice: untaxed, businessPartner: bp, items, config });
+  assert.ok(r.payload, 'it is a warning, not a blocker');
+  assert.ok(
+    r.warnings.some((w) => /carry no sales tax but are marked/i.test(w)),
+    `expected a zero-tax warning, got: ${r.warnings.join(' | ')}`
+  );
 });
 
 console.log('\nmapper — buyer address resolution');

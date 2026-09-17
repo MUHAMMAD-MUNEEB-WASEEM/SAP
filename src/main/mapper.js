@@ -367,6 +367,21 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       );
     } else {
       payload.scenarioId = scenarioId;
+
+      // SN001 is "to registered buyers", SN002 "to unregistered". Sending the
+      // wrong one for this buyer is a rejection FBR only reports after the
+      // round trip, so it is caught here.
+      const wantsRegistered = scenarioId === 'SN001';
+      const wantsUnregistered = scenarioId === 'SN002';
+      if (wantsRegistered && !isRegisteredBuyer) {
+        warnings.push(
+          'Scenario SN001 is for sales to REGISTERED buyers, but this buyer is Unregistered. SN002 is the matching scenario.'
+        );
+      } else if (wantsUnregistered && isRegisteredBuyer) {
+        warnings.push(
+          'Scenario SN002 is for sales to UNREGISTERED buyers, but this buyer is Registered. SN001 is the matching scenario.'
+        );
+      }
     }
   }
 
@@ -579,6 +594,22 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     );
   }
 
+  // A standard-rate sale carrying no tax is contradictory, and FBR checks the
+  // rate against the sale type. Flag it here rather than after a round trip.
+  const zeroRated = payload.items.filter(
+    (i) => /standard rate/i.test(i.saleType) && Number(i.salesTaxApplicable) === 0
+  );
+  if (zeroRated.length) {
+    warnings.push(
+      `${zeroRated.length} line(s) carry no sales tax but are marked "${zeroRated[0].saleType}". If this invoice really is exempt or zero-rated, the sale type and scenario should say so; if it should be taxed, the tax is missing in SAP.`
+    );
+  }
+
+  // Final pass: every string heading to FBR is scrubbed of control characters
+  // and exotic punctuation. Done once here rather than at each assignment so
+  // no field can be added later and quietly miss it.
+  scrubPayloadStrings(payload);
+
   // Sanity check against the SAP document total. A mismatch almost always means
   // the line tax amount was read from the wrong property for this B1 version.
   if (payload.items.length && invoice.DocTotal != null) {
@@ -624,6 +655,19 @@ function scanForHsCode(itemMaster) {
   return null;
 }
 
+/** Apply sanitizeText to every string in the payload, header and items alike. */
+function scrubPayloadStrings(payload) {
+  for (const [k, v] of Object.entries(payload)) {
+    if (typeof v === 'string') payload[k] = sanitizeText(v);
+  }
+  for (const item of payload.items || []) {
+    for (const [k, v] of Object.entries(item)) {
+      if (typeof v === 'string') item[k] = sanitizeText(v);
+    }
+  }
+  return payload;
+}
+
 function truncateText(value, max) {
   const s = String(value).replace(/\s+/g, ' ').trim();
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
@@ -637,6 +681,39 @@ function describeMissing(bucket, limit = 8) {
     .join(', ');
   const rest = entries.length - limit;
   return rest > 0 ? `${shown} and ${rest} more` : shown;
+}
+
+/**
+ * Make a SAP string safe to put in a filing.
+ *
+ * SAP free-text fields routinely carry control characters - tabs, carriage
+ * returns, and occasionally NULs from legacy imports. JSON.stringify escapes
+ * them into technically valid JSON, but receivers that parse leniently or
+ * re-serialise on the way through can still choke. They carry no meaning in an
+ * invoice, so they are removed rather than escaped.
+ *
+ * Smart quotes and dashes are folded to ASCII for the same reason: they add
+ * nothing and are a common source of encoding trouble in transit.
+ */
+function sanitizeText(value) {
+  if (value === undefined || value === null) return '';
+  return String(value)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[ --]/g, '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[‘’‛]/g, "'")
+    .replace(/[“”‟]/g, "'")
+    .replace(/[‐-―]/g, '-')
+    .replace(/ /g, ' ')
+    // The double quote and the backslash are the only characters left that
+    // JSON has to escape. FBR's gateway rejects a body containing them with
+    // "Requested JSON in Malformed" even though the escaping is correct, so
+    // they are folded rather than escaped. An inch mark in a carton size
+    // ("12.75\"") reads fine as 12.75' for the purposes of an invoice line.
+    .replace(/"/g, "'")
+    .replace(/\\/g, '/')
+    .replace(/ {2,}/g, ' ')
+    .trim();
 }
 
 /**
@@ -784,6 +861,7 @@ function mapUom(sapUom, uomMap) {
 module.exports = {
   buildFbrPayload,
   extractHsCode,
+  sanitizeText,
   matchUom,
   UOM_SYNONYMS,
   toIsoDate,
