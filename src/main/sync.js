@@ -398,7 +398,7 @@ class SyncService {
   async itemsBlockingInvoices({ fromDate, toDate } = {}) {
     const f = this.config().sapFields;
     const sap = this.sapClient();
-    const invoices = await this.listPending({ fromDate, toDate });
+    const { invoices } = await this.listPending({ fromDate, toDate });
 
     const needed = new Map();
     for (const inv of invoices) {
@@ -452,15 +452,22 @@ class SyncService {
     const cfg = this.config();
     const f = cfg.sapFields;
     let rows;
+    let truncated = false;
     try {
-      rows = await this.sapClient().listInvoices({
+      const page = await this.sapClient().listInvoices({
         statusField: f.statusField,
         irnField: f.irnField,
         fromDate: fromDate || defaultFromDate(cfg.sync.lookbackDays),
         toDate,
         pageSize: cfg.sync.pageSize,
+        maxResults: cfg.sync.maxResults,
         includeRegistered,
       });
+      rows = page.rows;
+      truncated = page.truncated;
+      this.log(
+        `Loaded ${rows.length} invoice(s)${truncated ? ` (capped at ${cfg.sync.maxResults})` : ''}.`
+      );
     } catch (err) {
       // By far the most common cause: the UDFs have not been created, or the
       // Service Layer has not been restarted since they were.
@@ -473,7 +480,7 @@ class SyncService {
     }
 
     const local = this.store.latestByDocEntry();
-    return rows.map((r) => {
+    const invoices = rows.map((r) => {
       const localRec = local.get(r.DocEntry);
       return {
         docEntry: r.DocEntry,
@@ -492,6 +499,8 @@ class SyncService {
         needsWriteBack: !!(localRec && localRec.invoiceNumber && localRec.writtenBack === false),
       };
     });
+
+    return { invoices, truncated, limit: cfg.sync.maxResults };
   }
 
   /** Build the payload for one invoice without sending anything. */

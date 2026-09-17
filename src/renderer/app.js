@@ -268,16 +268,26 @@ async function refreshInvoices() {
     toDate: $('toDate').value || undefined,
     includeRegistered: $('includeRegistered').checked,
   };
-  const rows = await call(window.api.invoices.list(filters), 'Load invoices');
-  if (!rows) return;
-  invoices = rows;
+  const result = await call(window.api.invoices.list(filters), 'Load invoices');
+  if (!result) return;
+  invoices = result.invoices || [];
   renderInvoices();
 
-  const needsRepair = rows.filter((r) => r.needsWriteBack);
+  // Write-back repair is the more urgent of the two, so it wins the alert bar.
+  const needsRepair = invoices.filter((r) => r.needsWriteBack);
   if (needsRepair.length) {
     showAlert(
-      `<strong>${needsRepair.length} invoice(s) were registered with FBR but the number never reached SAP.</strong> Open the Audit log tab and use “Repair pending write-backs”.`,
+      `<strong>${needsRepair.length} invoice(s) were registered with FBR but the number never reached SAP.</strong> Open the Audit log tab and use “Repair pending write-backs”.${
+        result.truncated
+          ? ` Note: only the newest ${result.limit} invoices were loaded — narrow the dates to see older ones.`
+          : ''
+      }`,
       'error'
+    );
+  } else if (result.truncated) {
+    showAlert(
+      `<strong>Showing the newest ${result.limit} invoices only.</strong> More match this date range than the app loads at once — narrow the From/To dates to reach older documents.`,
+      'warn'
     );
   }
 }

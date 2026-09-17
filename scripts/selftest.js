@@ -15,19 +15,34 @@ const {
   matchUom,
 } = require('../src/main/mapper');
 const { interpretResponse } = require('../src/main/fbrClient');
-const { sapErrorCode, describeSapError, LOGIN_HINTS } = require('../src/main/sapClient');
+const { sapErrorCode, describeSapError, LOGIN_HINTS, SapClient } = require('../src/main/sapClient');
 
 let passed = 0;
 let failed = 0;
 
+// Async cases are collected and awaited before the summary; without this an
+// async assertion failure would surface as an unhandled rejection and the run
+// would report a pass it never earned.
+const pending = [];
+
 function test(name, fn) {
-  try {
-    fn();
+  const ok = () => {
     passed++;
     console.log(`  PASS  ${name}`);
-  } catch (err) {
+  };
+  const bad = (err) => {
     failed++;
     console.log(`  FAIL  ${name}\n        ${err.message}`);
+  };
+  try {
+    const result = fn();
+    if (result && typeof result.then === 'function') {
+      pending.push(result.then(ok, bad));
+      return;
+    }
+    ok();
+  } catch (err) {
+    bad(err);
   }
 }
 
@@ -561,6 +576,58 @@ test('a missing buyer province blocks unless a fallback is configured', () => {
   assert.ok(r.warnings.some((w) => /fallback/i.test(w)));
 });
 
+console.log('\nsapClient — invoice paging');
+
+/** A SapClient whose HTTP layer is replaced by fixed pages. */
+function pagedClient(totalRows, pageSize) {
+  const client = new SapClient({ baseUrl: 'http://x', companyDB: 'd', username: 'u', password: 'p' });
+  client.requests = [];
+  client.withSession = async (method, path) => {
+    const skipMatch = path.match(/\$skip=(\d+)/);
+    const skip = skipMatch ? Number(skipMatch[1]) : 0;
+    client.requests.push(skip);
+    const page = [];
+    for (let i = skip; i < Math.min(skip + pageSize, totalRows); i++) {
+      page.push({ DocEntry: i + 1, DocNum: i + 1, DocDate: '2013-06-01' });
+    }
+    return { body: { value: page } };
+  };
+  return client;
+}
+
+const listArgs = { statusField: 'U_FBR_Status', irnField: 'U_FBR_IRN', pageSize: 20 };
+
+test('paging keeps going until a short page is returned', async () => {
+  const client = pagedClient(55, 20);
+  const { rows, truncated } = await client.listInvoices(listArgs);
+  assert.strictEqual(rows.length, 55, 'every matching invoice should be returned');
+  assert.strictEqual(truncated, false);
+  // 0, 20, 40 -> the 40 page is short (15), so it stops there.
+  assert.deepStrictEqual(client.requests, [0, 20, 40]);
+});
+
+test('a single short page needs only one request', async () => {
+  const client = pagedClient(7, 20);
+  const { rows } = await client.listInvoices(listArgs);
+  assert.strictEqual(rows.length, 7);
+  assert.deepStrictEqual(client.requests, [0]);
+});
+
+test('an exact multiple of the page size still terminates', async () => {
+  const client = pagedClient(40, 20);
+  const { rows } = await client.listInvoices(listArgs);
+  assert.strictEqual(rows.length, 40);
+  // Needs the empty third page to know it has finished.
+  assert.deepStrictEqual(client.requests, [0, 20, 40]);
+});
+
+test('the result is capped and flagged rather than fetched forever', async () => {
+  const client = pagedClient(10000, 20);
+  const { rows, truncated } = await client.listInvoices({ ...listArgs, maxResults: 50 });
+  assert.strictEqual(rows.length, 50);
+  assert.strictEqual(truncated, true, 'the caller must be told the list was cut short');
+});
+
 console.log('\nfbrClient — response interpretation');
 
 test('a valid response yields the invoice number', () => {
@@ -640,5 +707,7 @@ test('the SLD login failure carries actionable guidance', () => {
   assert.ok(/SLD/.test(hint), 'hint should mention the SLD');
 });
 
-console.log(`\n${passed} passed, ${failed} failed\n`);
-process.exit(failed ? 1 : 0);
+Promise.all(pending).then(() => {
+  console.log(`\n${passed} passed, ${failed} failed\n`);
+  process.exit(failed ? 1 : 0);
+});

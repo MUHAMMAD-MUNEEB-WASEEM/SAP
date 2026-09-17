@@ -161,6 +161,7 @@ class SapClient {
       toDate,
       pageSize = 100,
       includeRegistered = false,
+      maxResults = 1000,
     } = o;
 
     const select = [
@@ -186,10 +187,33 @@ class SapClient {
       `&$filter=${encodeURIComponent(filter)}` +
       `&$orderby=${encodeURIComponent('DocEntry desc')}`;
 
-    const res = await this.withSession('GET', `/Invoices${qs}`, undefined, {
-      Prefer: `odata.maxpagesize=${pageSize}`,
-    });
-    return (res.body && res.body.value) || [];
+    // Service Layer pages every collection. Without following the pages, a
+    // single request returns only the newest `pageSize` matches - so anything
+    // older simply never appears, however wide the date filter is.
+    //
+    // Paging is done with explicit $skip rather than by following the
+    // odata.nextLink, whose shape differs between Service Layer builds.
+    const rows = [];
+    let skip = 0;
+    let truncated = false;
+
+    for (;;) {
+      const res = await this.withSession('GET', `/Invoices${qs}&$skip=${skip}`, undefined, {
+        Prefer: `odata.maxpagesize=${pageSize}`,
+      });
+      const page = (res.body && res.body.value) || [];
+      rows.push(...page);
+
+      if (page.length < pageSize) break; // short page means this was the last
+      if (rows.length >= maxResults) {
+        truncated = true;
+        rows.length = maxResults;
+        break;
+      }
+      skip += page.length;
+    }
+
+    return { rows, truncated, pages: Math.ceil((skip + pageSize) / pageSize) };
   }
 
   /**

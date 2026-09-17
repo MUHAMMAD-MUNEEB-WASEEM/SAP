@@ -79,6 +79,7 @@ const DEFAULTS = {
   itemOverrides: {}, // ItemCode -> { hsCode, uoM, saleType, rate, ... }
   sync: {
     pageSize: 100,
+    maxResults: 1000,
     lookbackDays: 30,
     validateBeforePost: true,
     autoWriteBack: true,
