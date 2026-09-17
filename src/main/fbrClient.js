@@ -134,7 +134,7 @@ class FbrClient {
     const raw = await this.call(ENDPOINTS[this.environment].validate, 'POST', payload, {
       retries: 2,
     });
-    return interpretResponse(raw);
+    return interpretResponse(raw, { expectInvoiceNumber: false });
   }
 
   /**
@@ -228,7 +228,7 @@ function describeBody(res) {
  *   2. statusCode "00" but status "invalid" with per-item failures
  *   3. statusCode "00" / "Valid" with an invoiceNumber      -> accepted
  */
-function interpretResponse(raw) {
+function interpretResponse(raw, { expectInvoiceNumber = true } = {}) {
   const vr = (raw && raw.validationResponse) || {};
   const itemStatuses = Array.isArray(vr.invoiceStatuses) ? vr.invoiceStatuses : [];
 
@@ -242,8 +242,14 @@ function interpretResponse(raw) {
 
   const envelopeOk = String(vr.statusCode) === '00';
   const statusText = String(vr.status || '').toLowerCase();
+  // Only postinvoicedata issues an invoice number. A successful VALIDATION
+  // returns statusCode 00 / status Valid with no invoiceNumber at all
+  // (spec 4.2.3), so requiring one there rejects every valid invoice.
   const accepted =
-    envelopeOk && statusText === 'valid' && itemErrors.length === 0 && !!raw.invoiceNumber;
+    envelopeOk &&
+    statusText === 'valid' &&
+    itemErrors.length === 0 &&
+    (!expectInvoiceNumber || !!raw.invoiceNumber);
 
   const errors = [];
   if (vr.error) errors.push({ errorCode: vr.errorCode || vr.statusCode, error: vr.error });

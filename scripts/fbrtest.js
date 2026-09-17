@@ -121,6 +121,69 @@ test('an empty error body says so rather than showing nothing', async () => {
   );
 });
 
+section('fbrClient — validate vs register');
+
+test('a valid VALIDATION is accepted despite having no invoice number', async () => {
+  // Spec 4.2.3: a successful validate returns no invoiceNumber at all.
+  // Requiring one here rejected every valid invoice.
+  reset(() => ({
+    status: 200,
+    body: {
+      dated: '2025-05-13 13:13:07',
+      validationResponse: {
+        statusCode: '00',
+        status: 'Valid',
+        errorCode: null,
+        error: '',
+        invoiceStatuses: [{ itemSNo: '1', statusCode: '00', status: 'Valid', errorCode: null, error: '' }],
+      },
+    },
+    raw: '',
+    headers: {},
+  }));
+  const res = await client().validateInvoice({});
+  assert.strictEqual(res.accepted, true, 'validation must pass without an invoice number');
+  assert.deepStrictEqual(res.errors, []);
+});
+
+test('an invalid VALIDATION still reports its item errors', async () => {
+  reset(() => ({
+    status: 200,
+    body: {
+      dated: '2025-05-13 13:13:54',
+      validationResponse: {
+        statusCode: '00',
+        status: 'Invalid',
+        errorCode: null,
+        error: '',
+        invoiceStatuses: [
+          { itemSNo: '1', statusCode: '01', status: 'Invalid', errorCode: '0046', error: 'Provide rate.' },
+        ],
+      },
+    },
+    raw: '',
+    headers: {},
+  }));
+  const res = await client().validateInvoice({});
+  assert.strictEqual(res.accepted, false);
+  assert.ok(/0046/.test(res.errorSummary));
+});
+
+test('a REGISTRATION without an invoice number is NOT treated as success', async () => {
+  // The opposite rule: postinvoicedata must yield an IRN or it did not file.
+  reset(() => ({
+    status: 200,
+    body: {
+      dated: '2025-05-13 13:13:07',
+      validationResponse: { statusCode: '00', status: 'Valid', error: '', invoiceStatuses: [] },
+    },
+    raw: '',
+    headers: {},
+  }));
+  const res = await client().postInvoice({});
+  assert.strictEqual(res.accepted, false, 'no IRN means nothing was filed');
+});
+
 section('fbrClient — retry safety');
 
 test('validation is retried, because it files nothing', async () => {

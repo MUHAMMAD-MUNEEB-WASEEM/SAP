@@ -535,7 +535,9 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     // self-contradictory return, and worse than the error it was meant to fix.
     let taxAmount = tax;
     if (map.rateOverride) {
-      rate = String(map.rateOverride).trim();
+      // Normalised the same way as a derived rate: FBR matches the descriptor
+      // text, so "18" must be sent as "18%" or it is rejected with 0046.
+      rate = formatRate(String(map.rateOverride).trim(), map);
       const pct = parseRatePercent(rate);
       if (pct !== null) {
         const recomputed = round((net * pct) / 100, MONEY);
@@ -677,7 +679,14 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   if (payload.items.length && invoice.DocTotal != null) {
     const computed = payload.items.reduce((s, i) => s + i.totalValues, 0);
     const docTotal = Number(invoice.DocTotal);
-    if (Number.isFinite(docTotal) && Math.abs(computed - docTotal) > 1) {
+    // With a rate override in force the totals are SUPPOSED to diverge, and the
+    // override warning already says by how much. Repeating it here as a
+    // mapping fault would send the user chasing a problem that is not there.
+    if (
+      Number.isFinite(docTotal) &&
+      Math.abs(computed - docTotal) > 1 &&
+      !overriddenRates.size
+    ) {
       warnings.push(
         `Computed FBR total ${computed.toFixed(2)} differs from SAP DocTotal ${docTotal.toFixed(
           2

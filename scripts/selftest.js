@@ -552,6 +552,15 @@ test('an override forces the rate AND recalculates the tax to match', () => {
   assert.ok(r.warnings.some((w) => /0\.00 -> 180\.00/.test(w)), 'the change must be quantified');
 });
 
+test('an override typed without the percent sign is normalised', () => {
+  // FBR matches the descriptor text, so "18" must be sent as "18%".
+  for (const typed of ['18', ' 18 ', '18.0', '18%']) {
+    const cfg = { ...config, mapping: { ...config.mapping, rateOverride: typed } };
+    const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: cfg });
+    assert.strictEqual(r.payload.items[0].rate, '18%', `typed ${JSON.stringify(typed)}`);
+  }
+});
+
 test('an override matching SAP changes nothing and warns about nothing', () => {
   const cfg = { ...config, mapping: { ...config.mapping, rateOverride: '18%' } };
   const r = buildFbrPayload({ invoice, businessPartner: bp, items, config: cfg });

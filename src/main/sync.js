@@ -604,12 +604,15 @@ class SyncService {
     }
 
     const result = buildFbrPayload({ invoice, businessPartner, items, config: cfg });
-    const rateProblems = result.payload ? await this.checkRatesAgainstFbr(result.payload) : [];
+    const rateCheck = result.payload
+      ? await this.checkRatesAgainstFbr(result.payload)
+      : { problems: [], notes: [] };
 
     return {
       ...result,
       payload: loadErrors.length ? null : result.payload,
-      errors: [...loadErrors, ...result.errors, ...rateProblems],
+      errors: [...loadErrors, ...result.errors, ...rateCheck.problems],
+      warnings: [...result.warnings, ...rateCheck.notes],
       invoice,
       docEntry,
     };
@@ -634,6 +637,7 @@ class SyncService {
     }
 
     const problems = [];
+    const notes = [];
     for (const combo of combos.values()) {
       let lookup;
       try {
@@ -643,10 +647,24 @@ class SyncService {
           province: payload.sellerProvince,
         });
       } catch (err) {
+        notes.push(
+          `The rate could not be checked against FBR before sending (${err.message}), so FBR may still reject it with error 0046.`
+        );
         this.log(`Rate pre-check skipped (${err.message})`);
-        return [];
+        return { problems, notes };
       }
-      if (!lookup.ok) continue; // surfaced elsewhere; not worth blocking on
+
+      // Not resolving the sale type is worth saying out loud: it means this
+      // check is NOT protecting the submission, which previously looked
+      // identical to the check having passed.
+      if (!lookup.ok) {
+        notes.push(
+          `Could not pre-check the rate for sale type "${combo.saleType}": ${lookup.error} ` +
+            'FBR will still validate it, so a 0046 rejection is possible. ' +
+            'Use Tools -> Valid rates for a sale type to see the published options.'
+        );
+        continue;
+      }
 
       const accepted = lookup.rates.map((r) => r.desc);
       const matches = accepted.some(
@@ -661,7 +679,7 @@ class SyncService {
         );
       }
     }
-    return problems;
+    return { problems, notes };
   }
 
   /** Dry-run against FBR's validate endpoint. Registers nothing. */
