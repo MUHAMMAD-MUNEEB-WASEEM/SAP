@@ -7,7 +7,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "test": "node scripts/selftest.js && node scripts/smoketest.js",
+    "test": "node scripts/selftest.js && node scripts/fbrtest.js && node scripts/smoketest.js",
     "smoke": "node scripts/smoketest.js"
   },
   "devDependencies": {

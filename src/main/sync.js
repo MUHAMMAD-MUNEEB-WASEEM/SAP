@@ -608,7 +608,29 @@ class SyncService {
     // 3. Optional pre-validation.
     const fbr = this.fbrClient();
     if (cfg.sync.validateBeforePost) {
-      const v = await fbr.validateInvoice(payload);
+      let v;
+      try {
+        v = await fbr.validateInvoice(payload);
+      } catch (err) {
+        // Validation never files anything, so a transport failure here is safe
+        // - but the payload is recorded so the rejected values can be inspected.
+        this.store.append({
+          event: 'validate-error',
+          docEntry,
+          docNum: fresh.DocNum,
+          environment: fbr.environment,
+          error: err.message,
+          payload,
+        });
+        this.log(`Validation call failed for DocEntry ${docEntry}. Payload sent:\n${JSON.stringify(payload, null, 2)}`);
+        return {
+          ok: false,
+          stage: 'fbr-validate',
+          warnings,
+          errors: [`${err.message}\n\nNothing was filed — this failed during validation, before registration.`],
+          payload,
+        };
+      }
       if (!v.accepted) {
         this.store.append({
           event: 'validation-failed',

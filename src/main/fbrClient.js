@@ -71,14 +71,31 @@ class FbrClient {
     };
   }
 
-  async call(url, method, body) {
-    const res = await request({
-      url,
-      method,
-      headers: this.headers(),
-      body,
-      timeoutMs: this.cfg.timeoutMs || 90000,
-    });
+  /**
+   * @param {string} url
+   * @param {string} method
+   * @param {object} [body]
+   * @param {{retries?:number}} [opts] retry count for 5xx - MUST stay 0 for
+   *   postinvoicedata, where a retry risks a duplicate government filing.
+   */
+  async call(url, method, body, opts = {}) {
+    const retries = opts.retries || 0;
+    let res;
+    let attempt = 0;
+
+    for (;;) {
+      res = await request({
+        url,
+        method,
+        headers: this.headers(),
+        body,
+        timeoutMs: this.cfg.timeoutMs || 90000,
+      });
+      if (res.status < 500 || attempt >= retries) break;
+      attempt++;
+      // Linear back-off; the gateway is often briefly unavailable.
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
 
     if (res.status === 401) {
       throw new HttpError(
@@ -87,8 +104,13 @@ class FbrClient {
       );
     }
     if (res.status >= 500) {
+      // A 500 from this gateway is not always an FBR-side fault: a payload it
+      // cannot parse produces one too, and the body usually says which. So the
+      // response is surfaced rather than swallowed behind "retry later".
       throw new HttpError(
-        `FBR gateway error (HTTP ${res.status}). This is an FBR-side fault; retry later.`,
+        `FBR returned HTTP ${res.status}${attempt ? ` after ${attempt + 1} attempts` : ''}.\n\n` +
+          `FBR said: ${describeBody(res)}\n\n` +
+          'A 500 here is usually either a genuine gateway outage or a value in the payload that FBR could not parse — check the payload shown by Preview against the reference data (HS code, unit of measure, sale type, rate).',
         { status: res.status, body: res.body, url }
       );
     }
@@ -101,15 +123,26 @@ class FbrClient {
     return res.body;
   }
 
-  /** Dry-run an invoice against FBR validation without registering it. */
+  /**
+   * Dry-run an invoice against FBR validation without registering it.
+   * Safe to retry: it issues no invoice number and changes nothing.
+   */
   async validateInvoice(payload) {
-    const raw = await this.call(ENDPOINTS[this.environment].validate, 'POST', payload);
+    const raw = await this.call(ENDPOINTS[this.environment].validate, 'POST', payload, {
+      retries: 2,
+    });
     return interpretResponse(raw);
   }
 
-  /** Register an invoice and obtain the FBR invoice number (IRN). */
+  /**
+   * Register an invoice and obtain the FBR invoice number (IRN).
+   *
+   * Deliberately never retried. A 5xx leaves the outcome unknown - FBR may have
+   * recorded the filing before failing to respond - so an automatic retry could
+   * create a duplicate. The caller surfaces it as indeterminate instead.
+   */
   async postInvoice(payload) {
-    const raw = await this.call(ENDPOINTS[this.environment].post, 'POST', payload);
+    const raw = await this.call(ENDPOINTS[this.environment].post, 'POST', payload, { retries: 0 });
     return interpretResponse(raw);
   }
 
@@ -165,6 +198,23 @@ class FbrClient {
   async getRegistrationType(regNo) {
     return this.call(REFERENCE.regType, 'POST', { Registration_No: regNo });
   }
+}
+
+/** Render whatever FBR sent back, whether JSON, HTML or plain text. */
+function describeBody(res) {
+  if (res.body && typeof res.body === 'object') {
+    return JSON.stringify(res.body).slice(0, 600);
+  }
+  const text = String(res.raw || res.body || '').trim();
+  if (!text) return '(empty response body)';
+  // Gateways often answer with an HTML error page; the tags are just noise.
+  const stripped = text
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return (stripped || text).slice(0, 600);
 }
 
 /**
