@@ -121,6 +121,7 @@ function fillForm(c) {
 
   $('map_defaultScenarioId').value = c.mapping.defaultScenarioId || 'SN001';
   $('map_defaultProvince').value = c.mapping.defaultProvince || '';
+  $('map_defaultBuyerAddress').value = c.mapping.defaultBuyerAddress || '';
   $('map_defaultSaleType').value = c.mapping.defaultSaleType || '';
   $('map_defaultUom').value = c.mapping.defaultUom || '';
   $('map_defaultHsCode').value = c.mapping.defaultHsCode || '';
@@ -175,6 +176,7 @@ function readForm() {
     mapping: {
       defaultScenarioId: $('map_defaultScenarioId').value,
       defaultProvince: $('map_defaultProvince').value,
+      defaultBuyerAddress: $('map_defaultBuyerAddress').value.trim(),
       defaultSaleType: $('map_defaultSaleType').value.trim(),
       defaultUom: $('map_defaultUom').value.trim(),
       defaultHsCode: $('map_defaultHsCode').value.trim(),
@@ -197,6 +199,26 @@ function updateEnvBadge(env) {
 }
 
 $('fbr_environment').addEventListener('change', (e) => updateEnvBadge(e.target.value));
+
+$('btnSuggestSeller').addEventListener('click', async () => {
+  const s = await call(window.api.test.suggestSeller(), 'Read company details from SAP');
+  if (!s) return;
+  // Only fill what is empty, so anything already checked and entered stands.
+  const fill = (id, value) => {
+    const el = $(id);
+    if (value && !el.value.trim()) el.value = value;
+  };
+  fill('seller_ntnCnic', s.ntnCnic);
+  fill('seller_businessName', s.businessName);
+  fill('seller_province', s.province);
+  fill('seller_address', s.address);
+  showAlert(
+    `<strong>Filled from SAP.</strong> Check these against your FBR registration, then press Save settings.${
+      s.address ? '' : ' SAP had no company address — enter it by hand.'
+    }`,
+    'ok'
+  );
+});
 
 $('btnSaveSettings').addEventListener('click', async () => {
   const patch = readForm();

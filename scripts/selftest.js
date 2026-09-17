@@ -252,6 +252,54 @@ test('dimensions in a description are not mistaken for a code', () => {
   assert.strictEqual(extractHsCode('CARTON 13 x 12 x 10" 5-PLY'), null);
 });
 
+test('the item Remarks field is consulted without any configuration', () => {
+  // The default config still points at U_FBR_HSCode; Remarks must still work.
+  const remarksOnly = new Map([
+    ['ITEM01', {
+      ItemCode: 'ITEM01',
+      UserText: 'HS Code: 4821.1000 - printed label',
+      U_FBR_UOM: 'Numbers, pieces, units',
+      U_FBR_SaleType: 'Goods at standard rate (default)',
+    }],
+  ]);
+  const r = buildFbrPayload({ invoice, businessPartner: bp, items: remarksOnly, config });
+  assert.deepStrictEqual(r.errors, [], `unexpected errors: ${r.errors.join(' | ')}`);
+  assert.strictEqual(r.payload.items[0].hsCode, '4821.1000');
+  // Using Remarks is noted, not silent.
+  assert.ok(r.warnings.some((w) => /Remarks/i.test(w)));
+});
+
+test('a dedicated field beats Remarks, but a note in it falls through', () => {
+  const both = new Map([
+    ['ITEM01', {
+      ItemCode: 'ITEM01',
+      U_FBR_HSCode: '4819.1000',
+      UserText: 'HS 4821.1000',
+      U_FBR_UOM: 'Numbers, pieces, units',
+      U_FBR_SaleType: 'Goods at standard rate (default)',
+    }],
+  ]);
+  assert.strictEqual(
+    buildFbrPayload({ invoice, businessPartner: bp, items: both, config }).payload.items[0].hsCode,
+    '4819.1000'
+  );
+
+  // A dedicated field holding a note must not block Remarks from being used.
+  const noteInUdf = new Map([
+    ['ITEM01', {
+      ItemCode: 'ITEM01',
+      U_FBR_HSCode: 'TBC',
+      UserText: '4821.1000',
+      U_FBR_UOM: 'Numbers, pieces, units',
+      U_FBR_SaleType: 'Goods at standard rate (default)',
+    }],
+  ]);
+  assert.strictEqual(
+    buildFbrPayload({ invoice, businessPartner: bp, items: noteInUdf, config }).payload.items[0].hsCode,
+    '4821.1000'
+  );
+});
+
 test('an item whose source field holds no readable code is reported distinctly', () => {
   const remarksItems = new Map([
     ['ITEM01', { ItemCode: 'ITEM01', UserText: 'CARTON 5-PLY, no code', U_FBR_UOM: 'Numbers, pieces, units', U_FBR_SaleType: 'Goods at standard rate (default)' }],
@@ -260,9 +308,11 @@ test('an item whose source field holds no readable code is reported distinctly',
   const r = buildFbrPayload({ invoice, businessPartner: bp, items: remarksItems, config: cfg });
   assert.strictEqual(r.payload, null);
   assert.ok(
-    r.errors.some((e) => /no HS code could be read from it/i.test(e)),
+    r.errors.some((e) => /no code could be read from it/i.test(e)),
     `expected an unreadable-source error, got: ${r.errors.join(' | ')}`
   );
+  // The message must name where the text actually came from.
+  assert.ok(r.errors.some((e) => /UserText holds/i.test(e)));
 });
 
 test('reading the HS code from the Remarks field produces a valid payload', () => {
@@ -342,6 +392,45 @@ test('a configured default unit unblocks items with nothing else set', () => {
   const r = buildFbrPayload({ invoice, businessPartner: bp, items: noUomItems, config: cfg });
   assert.deepStrictEqual(r.errors, [], `unexpected errors: ${r.errors.join(' | ')}`);
   assert.strictEqual(r.payload.items[0].uoM, 'Numbers, pieces, units');
+});
+
+console.log('\nmapper — buyer address resolution');
+
+test('the address is found in AddressExtension when the document has none', () => {
+  const inv = {
+    ...invoice,
+    Address: '',
+    AddressExtension: {
+      BillToStreet: '12 Industrial Rd',
+      BillToCity: 'Karachi',
+      BillToState: 'Sindh',
+      BillToZipCode: '74900',
+    },
+  };
+  const r = buildFbrPayload({ invoice: inv, businessPartner: bp, items, config });
+  assert.strictEqual(r.payload.buyerAddress, '12 Industrial Rd, Karachi, Sindh, 74900');
+});
+
+test('the address is found on the business partner address collection', () => {
+  const inv = { ...invoice, Address: '' };
+  const withAddresses = {
+    ...bp,
+    BPAddresses: [{ AddressType: 'bo_BillTo', Street: '5 Mall Rd', City: 'Lahore', State: 'Punjab' }],
+  };
+  const r = buildFbrPayload({ invoice: inv, businessPartner: withAddresses, items, config });
+  assert.strictEqual(r.payload.buyerAddress, '5 Mall Rd, Lahore, Punjab');
+});
+
+test('a fallback address unblocks, and says so', () => {
+  const inv = { ...invoice, Address: '' };
+  const blocked = buildFbrPayload({ invoice: inv, businessPartner: bp, items, config });
+  assert.strictEqual(blocked.payload, null);
+  assert.ok(blocked.errors.some((e) => /Buyer address is empty/i.test(e)));
+
+  const cfg = { ...config, mapping: { ...config.mapping, defaultBuyerAddress: 'Karachi' } };
+  const r = buildFbrPayload({ invoice: inv, businessPartner: bp, items, config: cfg });
+  assert.strictEqual(r.payload.buyerAddress, 'Karachi');
+  assert.ok(r.warnings.some((w) => /fallback/i.test(w)));
 });
 
 console.log('\nmapper — consolidated reporting');

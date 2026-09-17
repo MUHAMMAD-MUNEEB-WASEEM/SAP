@@ -241,6 +241,12 @@ function registerHandlers() {
     return r;
   });
 
+  handle('seller:suggest', async () => {
+    const s = await sync.suggestSeller();
+    log(`Seller details suggested from SAP company information: ${s.businessName || '(no name)'}`);
+    return s;
+  });
+
   handle('test:fbr', async () => {
     const r = await sync.testFbr();
     log(`FBR ${r.environment} token OK — reference API returned ${r.provinceCount} provinces.`);

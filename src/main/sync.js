@@ -15,7 +15,7 @@
  */
 const { SapClient } = require('./sapClient');
 const { FbrClient } = require('./fbrClient');
-const { buildFbrPayload, extractHsCode } = require('./mapper');
+const { buildFbrPayload, extractHsCode, normaliseProvince } = require('./mapper');
 const { tableGroups } = require('./udfSpecs');
 
 class SyncService {
@@ -143,6 +143,25 @@ class SyncService {
       baseUrl: cfg.baseUrl,
       probes: { configuredCompany: probeA, nonexistentCompany: probeB },
       findings,
+    };
+  }
+
+  /**
+   * Propose the seller block from SAP's own company information, so the
+   * details FBR requires do not have to be retyped. Returns a suggestion for
+   * the user to confirm rather than saving anything - what FBR holds must match
+   * the registration, which only the user can vouch for.
+   */
+  async suggestSeller() {
+    const info = await this.sapClient().getCompany();
+    const address = composeCompanyAddress(info);
+    return {
+      ntnCnic: String(info.FederalTaxID || info.TaxIdNum || info.AdditionalID || '')
+        .replace(/[^0-9]/g, ''),
+      businessName: info.CompanyName || '',
+      province: normaliseProvince(info.State || info.County || '', this.config().mapping.provinces) || '',
+      address,
+      raw: info,
     };
   }
 
@@ -281,7 +300,7 @@ class SyncService {
     try {
       rows = await this.sapClient().listItems({
         ...base,
-        extraFields: ['InventoryUOM', 'SalesUnit'],
+        extraFields: ['InventoryUOM', 'SalesUnit', 'UserText'],
       });
     } catch (err) {
       this.log(`Item list without SAP unit columns (${err.message})`);
@@ -289,8 +308,13 @@ class SyncService {
     }
     const extract = this.config().mapping.extractHsFromText !== false;
     return rows.map((r) => {
-      const rawHs = r[f.itemHsCodeField] || '';
-      const parsed = extract ? extractHsCode(rawHs) : String(rawHs).trim();
+      // Same fall-through the mapper uses: the configured field, then Remarks.
+      const configured = r[f.itemHsCodeField] || '';
+      const fromConfigured = extract ? extractHsCode(configured) : String(configured).trim();
+      const remarks = r.UserText || '';
+      const fromRemarks = extract ? extractHsCode(remarks) : '';
+      const parsed = fromConfigured || fromRemarks;
+      const rawHs = fromConfigured ? configured : fromRemarks ? remarks : configured || remarks;
       return {
         itemCode: r.ItemCode,
         itemName: r.ItemName,
@@ -393,14 +417,16 @@ class SyncService {
     for (const entry of needed.values()) {
       try {
         const item = await sap.getItem(entry.itemCode);
-        const hsCode = item[f.itemHsCodeField] || '';
+        const extract = this.config().mapping.extractHsFromText !== false;
+        const configured = item[f.itemHsCodeField] || '';
+        const remarks = item.UserText || '';
         const uoM = item[f.itemUomField] || '';
-        // Judge readiness on the EXTRACTED code: a Remarks field full of text
-        // with no code in it is not a mapped item.
-        const parsedHs =
-          this.config().mapping.extractHsFromText === false
-            ? String(hsCode).trim()
-            : extractHsCode(hsCode);
+        // Judge readiness on the EXTRACTED code, from either source: a Remarks
+        // field full of text with no code in it is not a mapped item.
+        const parsedHs = extract
+          ? extractHsCode(configured) || extractHsCode(remarks)
+          : String(configured).trim();
+        const hsCode = extract && !extractHsCode(configured) && parsedHs ? remarks : configured;
         if (parsedHs && uoM) continue; // already mapped
         out.push({
           itemCode: entry.itemCode,
@@ -750,6 +776,16 @@ function defaultFromDate(days) {
   const d = new Date();
   d.setDate(d.getDate() - (Number(days) || 30));
   return d.toISOString().slice(0, 10);
+}
+
+
+/** Assemble a single-line address from SAP's company information fields. */
+function composeCompanyAddress(info) {
+  if (!info) return '';
+  const parts = [info.Street, info.Block, info.City, info.State, info.ZipCode]
+    .filter((p) => p && String(p).trim())
+    .map((p) => String(p).trim());
+  return parts.join(', ');
 }
 
 module.exports = { SyncService };

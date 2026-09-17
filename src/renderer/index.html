@@ -202,6 +202,11 @@
               </select>
             </label>
             <label>Address<input id="seller_address" /></label>
+            <button id="btnSuggestSeller" class="btn">Fill from SAP company details</button>
+            <p class="hint">
+              Reads your company information from SAP. Check it against your FBR registration before
+              saving — FBR matches these against what it holds for your NTN.
+            </p>
           </fieldset>
 
           <fieldset>
@@ -227,6 +232,10 @@
               Used only when the business partner has no usable province. Every invoice that relies
               on it is flagged with a warning, because the province affects the filing.
             </p>
+            <label>
+              Fallback buyer address
+              <input id="map_defaultBuyerAddress" placeholder="used only when SAP has none" />
+            </label>
             <label>Default sale type<input id="map_defaultSaleType" /></label>
             <label>Default unit of measure<input id="map_defaultUom" placeholder="Numbers, pieces, units" /></label>
             <label>Default HS code<input id="map_defaultHsCode" placeholder="0101.2100" /></label>

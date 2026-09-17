@@ -66,6 +66,7 @@ const DEFAULTS = {
     defaultInvoiceType: 'Sale Invoice',
     defaultScenarioId: 'SN001',
     defaultProvince: '',
+    defaultBuyerAddress: '',
     extractHsFromText: true,
     defaultSaleType: 'Goods at standard rate (default)',
     defaultUom: '',

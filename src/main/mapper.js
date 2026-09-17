@@ -281,10 +281,13 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     );
   }
 
-  const buyerAddress =
-    typeof invoice.Address === 'string' && invoice.Address.trim()
-      ? invoice.Address.replace(/\r?\n/g, ', ')
-      : pick(businessPartner, ['Address'], '');
+  let buyerAddress = resolveBuyerAddress(invoice, businessPartner);
+  if (!buyerAddress && map.defaultBuyerAddress) {
+    buyerAddress = map.defaultBuyerAddress;
+    warnings.push(
+      `Buyer address could not be read from the invoice or the business partner; used the configured fallback "${map.defaultBuyerAddress}".`
+    );
+  }
 
   const rawProvince =
     pick(businessPartner, [f.bpProvinceField || 'U_FBR_Province'], null) ||
@@ -366,6 +369,7 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   // and reporting it per line obscures that the fix lives on the item master.
   const missingHsCode = new Map();
   const unreadableHsCode = new Map();
+  const remarksSourced = new Set();
   const missingUom = new Map();
   const missingSaleType = new Map();
   const noteMissing = (bucket, key, lineNo) => {
@@ -383,22 +387,42 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     const description =
       pick(line, ['ItemDescription', 'Dscription', 'Text'], '') || itemCode || `Line ${n}`;
 
-    const rawHsCode =
-      override.hsCode ||
-      pick(itemMaster, [f.itemHsCodeField || 'U_FBR_HSCode'], null) ||
-      pick(line, [f.lineHsCodeField || 'U_FBR_HSCode'], null) ||
-      map.defaultHsCode ||
-      null;
+    // Each candidate source is tried in turn and the first that actually yields
+    // a code wins. Falling THROUGH matters: a dedicated field holding a note
+    // rather than a code should not stop the Remarks field being consulted.
+    const hsCandidates = [
+      [override.hsCode, 'item override'],
+      [pick(itemMaster, [f.itemHsCodeField || 'U_FBR_HSCode'], null), f.itemHsCodeField || 'U_FBR_HSCode'],
+      [pick(line, [f.lineHsCodeField || 'U_FBR_HSCode'], null), 'the invoice line'],
+      // Many sites keep the code in the item master's Remarks (OITM.UserText)
+      // rather than a dedicated field, so it is consulted without configuration.
+      [pick(itemMaster, ['UserText'], null), 'the item Remarks'],
+      [map.defaultHsCode, 'the configured default'],
+    ];
 
-    // The source field may be free text (Remarks, a description), so the code
-    // is extracted unless extraction has been explicitly turned off.
     let hsCode = null;
-    if (rawHsCode) {
-      hsCode =
-        map.extractHsFromText === false
-          ? String(rawHsCode).trim()
-          : extractHsCode(rawHsCode);
-      if (!hsCode) noteMissing(unreadableHsCode, `${label} → "${truncateText(rawHsCode, 40)}"`, n);
+    let hsFoundIn = null;
+    let hsUnparsed = null;
+    for (const [raw, source] of hsCandidates) {
+      if (!raw) continue;
+      const parsed =
+        map.extractHsFromText === false ? String(raw).trim() : extractHsCode(raw);
+      if (parsed) {
+        hsCode = parsed;
+        hsFoundIn = source;
+        break;
+      }
+      if (!hsUnparsed) hsUnparsed = { raw, source };
+    }
+
+    if (hsCode) {
+      if (hsFoundIn === 'the item Remarks') remarksSourced.add(label);
+    } else if (hsUnparsed) {
+      noteMissing(
+        unreadableHsCode,
+        `${label} → ${hsUnparsed.source} holds "${truncateText(hsUnparsed.raw, 40)}"`,
+        n
+      );
     } else {
       noteMissing(missingHsCode, label, n);
     }
@@ -490,13 +514,24 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       } on the item master — once per product, not per invoice. Use the Item mapping tab.`
     );
   }
+  if (remarksSourced.size) {
+    warnings.push(
+      `${remarksSourced.size} item(s) took their HS code from the item master's Remarks field: ${[
+        ...remarksSourced,
+      ]
+        .slice(0, 8)
+        .join(', ')}${
+        remarksSourced.size > 8 ? ` and ${remarksSourced.size - 8} more` : ''
+      }. That works, but a dedicated field is harder to disturb by accident.`
+    );
+  }
   if (unreadableHsCode.size) {
     errors.push(
-      `${unreadableHsCode.size} item(s) have text in ${
-        f.itemHsCodeField || 'U_FBR_HSCode'
-      } but no HS code could be read from it: ${describeMissing(
+      `${unreadableHsCode.size} item(s) have text where an HS code should be, but no code could be read from it: ${describeMissing(
         unreadableHsCode
-      )}. An HS code looks like 4819.1000.`
+      )}. An HS code looks like 4819.1000. Checked ${
+        f.itemHsCodeField || 'U_FBR_HSCode'
+      } and the item master's Remarks.`
     );
   }
   if (missingUom.size) {
@@ -551,6 +586,74 @@ function describeMissing(bucket, limit = 8) {
     .join(', ');
   const rest = entries.length - limit;
   return rest > 0 ? `${shown} and ${rest} more` : shown;
+}
+
+/** Join address parts, dropping the empty ones. */
+function composeAddress(parts) {
+  return parts
+    .filter((p) => p !== undefined && p !== null && String(p).trim() !== '')
+    .map((p) => String(p).trim())
+    .join(', ');
+}
+
+/**
+ * Find the buyer's address.
+ *
+ * FBR requires one, and Service Layer holds it in several different shapes
+ * depending on how the document was created: a pre-formatted block on the
+ * document, discrete bill-to fields in AddressExtension, or only on the
+ * business partner's address collection. An empty `Address` property on the
+ * invoice does not mean the address is absent from SAP - it usually just means
+ * it lives in one of the other two places.
+ */
+function resolveBuyerAddress(invoice, bp) {
+  if (typeof invoice.Address === 'string' && invoice.Address.trim()) {
+    return invoice.Address.replace(/\r?\n/g, ', ').trim();
+  }
+
+  const ext = invoice.AddressExtension;
+  if (ext) {
+    const billTo = composeAddress([
+      ext.BillToStreet,
+      ext.BillToBlock,
+      ext.BillToCity,
+      ext.BillToState,
+      ext.BillToZipCode,
+    ]);
+    if (billTo) return billTo;
+
+    const shipTo = composeAddress([
+      ext.ShipToStreet,
+      ext.ShipToBlock,
+      ext.ShipToCity,
+      ext.ShipToState,
+      ext.ShipToZipCode,
+    ]);
+    if (shipTo) return shipTo;
+  }
+
+  if (bp) {
+    if (typeof bp.Address === 'string' && bp.Address.trim()) return bp.Address.trim();
+
+    if (Array.isArray(bp.BPAddresses) && bp.BPAddresses.length) {
+      const billTo =
+        bp.BPAddresses.find((a) => a.AddressType === 'bo_BillTo') || bp.BPAddresses[0];
+      const composed = composeAddress([
+        billTo.Street,
+        billTo.Block,
+        billTo.City,
+        billTo.State,
+        billTo.ZipCode,
+      ]);
+      if (composed) return composed;
+    }
+
+    if (typeof bp.MailAddress === 'string' && bp.MailAddress.trim()) {
+      return bp.MailAddress.replace(/\r?\n/g, ', ').trim();
+    }
+  }
+
+  return '';
 }
 
 function extractProvince(invoice, bp) {
