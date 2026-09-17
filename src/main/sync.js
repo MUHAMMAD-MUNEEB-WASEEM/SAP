@@ -278,6 +278,69 @@ class SyncService {
     };
   }
 
+  // ------------------------------------------------------------- rates
+
+  /**
+   * Which rates FBR accepts for a sale type, per spec sections 5.1, 5.5 and 5.8.
+   *
+   * This is the lookup FBR's own error 0046 tells you to consult: the rate must
+   * be one it publishes for that sale type, on that date, in that province.
+   * Resolving it needs two ID lookups first — the sale type's transaction type
+   * ID and the province code — neither of which appears in the invoice payload.
+   *
+   * Results are cached for the session: the reference data is large and changes
+   * far more slowly than a batch of invoices.
+   */
+  async ratesForSaleType({ saleType, date, province }) {
+    if (!this._refCache) this._refCache = {};
+    const cache = this._refCache;
+    const fbr = this.fbrClient();
+
+    if (!cache.transTypes) cache.transTypes = await fbr.getTransactionTypes();
+    if (!cache.provinces) cache.provinces = await fbr.getProvinces();
+
+    const norm = (s) => String(s || '').trim().toLowerCase();
+
+    const tt = (cache.transTypes || []).find(
+      (t) => norm(t.transactioN_DESC || t.transaction_DESC) === norm(saleType)
+    );
+    if (!tt) {
+      return {
+        ok: false,
+        error: `FBR does not publish a transaction type called "${saleType}". Pick one of the published sale types.`,
+        available: (cache.transTypes || [])
+          .map((t) => t.transactioN_DESC || t.transaction_DESC)
+          .filter(Boolean),
+      };
+    }
+
+    const prov = (cache.provinces || []).find(
+      (p) => norm(p.stateProvinceDesc) === norm(province)
+    );
+    if (!prov) {
+      return {
+        ok: false,
+        error: `"${province}" does not match an FBR province.`,
+        available: (cache.provinces || []).map((p) => p.stateProvinceDesc).filter(Boolean),
+      };
+    }
+
+    const transTypeId = tt.transactioN_TYPE_ID || tt.transaction_TYPE_ID;
+    const provinceId = prov.stateProvinceCode;
+    const key = `${transTypeId}|${provinceId}|${date}`;
+    if (!cache[key]) {
+      cache[key] = await fbr.getSaleTypeToRate(toFbrDate(date), transTypeId, provinceId);
+    }
+
+    const rates = (cache[key] || []).map((r) => ({
+      id: r.ratE_ID,
+      desc: r.ratE_DESC,
+      value: r.ratE_VALUE,
+    }));
+
+    return { ok: true, saleType, transTypeId, province, provinceId, date, rates };
+  }
+
   // -------------------------------------------------------- item mapping
 
   /** Item master rows for the FBR mapping editor. */
@@ -541,13 +604,64 @@ class SyncService {
     }
 
     const result = buildFbrPayload({ invoice, businessPartner, items, config: cfg });
+    const rateProblems = result.payload ? await this.checkRatesAgainstFbr(result.payload) : [];
+
     return {
       ...result,
       payload: loadErrors.length ? null : result.payload,
-      errors: [...loadErrors, ...result.errors],
+      errors: [...loadErrors, ...result.errors, ...rateProblems],
       invoice,
       docEntry,
     };
+  }
+
+  /**
+   * Check each line's rate against what FBR publishes for its sale type.
+   *
+   * FBR reports a mismatch as error 0046 once per line, which for a ten-line
+   * invoice is ten identical messages that name neither the offending value nor
+   * the acceptable ones. Checking here reports it once, with the valid options.
+   *
+   * A failure to reach the reference API is deliberately NOT fatal - it would
+   * be wrong to block a filing because a lookup was unavailable.
+   */
+  async checkRatesAgainstFbr(payload) {
+    const combos = new Map();
+    for (const item of payload.items || []) {
+      const key = `${item.saleType}|${item.rate}`;
+      if (!combos.has(key)) combos.set(key, { saleType: item.saleType, rate: item.rate, lines: [] });
+      combos.get(key).lines.push(payload.items.indexOf(item) + 1);
+    }
+
+    const problems = [];
+    for (const combo of combos.values()) {
+      let lookup;
+      try {
+        lookup = await this.ratesForSaleType({
+          saleType: combo.saleType,
+          date: payload.invoiceDate,
+          province: payload.sellerProvince,
+        });
+      } catch (err) {
+        this.log(`Rate pre-check skipped (${err.message})`);
+        return [];
+      }
+      if (!lookup.ok) continue; // surfaced elsewhere; not worth blocking on
+
+      const accepted = lookup.rates.map((r) => r.desc);
+      const matches = accepted.some(
+        (d) => String(d).trim().toLowerCase() === String(combo.rate).trim().toLowerCase()
+      );
+      if (!matches && accepted.length) {
+        problems.push(
+          `Rate "${combo.rate}" is not valid for sale type "${combo.saleType}" — FBR rejects this as error 0046. ` +
+            `Accepted rates for that sale type: ${accepted.slice(0, 10).join(', ')}` +
+            `${accepted.length > 10 ? ` and ${accepted.length - 10} more` : ''}. ` +
+            'Either the sale type is wrong for this invoice, or the tax is missing in SAP.'
+        );
+      }
+    }
+    return problems;
   }
 
   /** Dry-run against FBR's validate endpoint. Registers nothing. */
@@ -825,6 +939,18 @@ function defaultFromDate(days) {
   return d.toISOString().slice(0, 10);
 }
 
+
+/**
+ * FBR's reference APIs want DD-MMM-YYYY (e.g. 24-Feb-2024), not the ISO form
+ * used in the invoice payload itself.
+ */
+const FBR_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function toFbrDate(isoDate) {
+  const m = String(isoDate || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return isoDate;
+  return `${m[3]}-${FBR_MONTHS[Number(m[2]) - 1]}-${m[1]}`;
+}
 
 /** Assemble a single-line address from SAP's company information fields. */
 function composeCompanyAddress(info) {

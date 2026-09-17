@@ -241,6 +241,8 @@ function registerHandlers() {
     return r;
   });
 
+  handle('fbr:ratesForSaleType', async (params) => sync.ratesForSaleType(params || {}));
+
   handle('seller:suggest', async () => {
     const s = await sync.suggestSeller();
     log(`Seller details suggested from SAP company information: ${s.businessName || '(no name)'}`);

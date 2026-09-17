@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   fbr: {
     reference: (kind, params) => invoke('fbr:reference', kind, params),
+    ratesForSaleType: (params) => invoke('fbr:ratesForSaleType', params),
   },
   diagnostics: {
     metadata: () => invoke('sap:metadata'),

@@ -359,6 +359,16 @@
             </div>
             <label>HS code → valid UoM<input id="ref_hsCode" placeholder="5904.9000" /></label>
             <button class="btn" id="btnHsUom">Look up HS code</button>
+            <label>
+              Valid rates for a sale type
+              <input id="ref_saleType" list="saleTypeList" placeholder="Goods at standard rate (default)" />
+            </label>
+            <datalist id="saleTypeList"></datalist>
+            <button class="btn btn-primary" id="btnRatesForSaleType">Look up valid rates</button>
+            <p class="hint">
+              This is the lookup FBR's error 0046 points at — the rate on each line must be one FBR
+              publishes for that sale type, on that invoice date, in your province.
+            </p>
             <label>Registration no. → status<input id="ref_regNo" placeholder="0788762" /></label>
             <div class="toolbar wrap">
               <button class="btn" id="btnRegType">Registration type</button>

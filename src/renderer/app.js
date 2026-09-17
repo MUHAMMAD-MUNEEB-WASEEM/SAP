@@ -895,6 +895,47 @@ $('btnHsUom').addEventListener('click', async () => {
   if (d) showTool(d);
 });
 
+$('btnRatesForSaleType').addEventListener('click', async () => {
+  const cfg = config || {};
+  const saleType = $('ref_saleType').value.trim() || (cfg.mapping || {}).defaultSaleType;
+  if (!saleType) return showAlert('Enter a sale type first, or set a default under Settings.');
+
+  // Offer the published sale types as autocomplete on first use.
+  const types = await call(window.api.fbr.reference('transTypes', {}), 'FBR transaction types');
+  if (types) {
+    $('saleTypeList').innerHTML = types
+      .map((t) => `<option value="${esc(t.transactioN_DESC || t.transaction_DESC || '')}"></option>`)
+      .join('');
+  }
+
+  const r = await call(
+    window.api.fbr.ratesForSaleType({
+      saleType,
+      date: $('toDate').value || new Date().toISOString().slice(0, 10),
+      province: (cfg.seller || {}).province,
+    }),
+    'Valid rates lookup'
+  );
+  if (!r) return;
+
+  if (!r.ok) {
+    showTool([r.error, '', 'Published values:', ...(r.available || []).map((x) => '  ' + x)].join('\n'));
+    return;
+  }
+  showTool(
+    [
+      `Sale type : ${r.saleType}  (transaction type id ${r.transTypeId})`,
+      `Province  : ${r.province}  (id ${r.provinceId})`,
+      `Date      : ${r.date}`,
+      '',
+      'Rates FBR accepts for this combination:',
+      ...r.rates.map((x) => `  ${String(x.desc).padEnd(46)} value ${x.value}`),
+      '',
+      'A line whose rate is not in this list is rejected with error 0046.',
+    ].join('\n')
+  );
+});
+
 $('btnRegType').addEventListener('click', async () => {
   const regNo = $('ref_regNo').value.trim();
   if (!regNo) return;
