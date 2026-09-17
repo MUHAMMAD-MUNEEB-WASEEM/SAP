@@ -622,12 +622,34 @@ function describeMissing(bucket, limit = 8) {
   return rest > 0 ? `${shown} and ${rest} more` : shown;
 }
 
+/**
+ * Flatten a SAP address block to a single clean line.
+ *
+ * B1 stores document addresses with embedded carriage returns, and often bare
+ * CR without LF - real data looks like
+ * "DOCKYARD ROAD WEST WHARF KARACHI PAKISTAN\r\r \rPAKISTAN". Sending those
+ * control characters to FBR is not acceptable, so every line-break run becomes
+ * a separator and the repeats are collapsed.
+ */
+function cleanAddress(value) {
+  if (value === undefined || value === null) return '';
+  return String(value)
+    .replace(/[\r\n]+/g, ', ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(?:,\s*)+/g, ', ')
+    .replace(/^[,\s]+|[,\s]+$/g, '')
+    .trim();
+}
+
 /** Join address parts, dropping the empty ones. */
 function composeAddress(parts) {
-  return parts
-    .filter((p) => p !== undefined && p !== null && String(p).trim() !== '')
-    .map((p) => String(p).trim())
-    .join(', ');
+  return cleanAddress(
+    parts
+      .filter((p) => p !== undefined && p !== null && String(p).trim() !== '')
+      .map((p) => String(p).trim())
+      .join(', ')
+  );
 }
 
 /**
@@ -641,9 +663,8 @@ function composeAddress(parts) {
  * it lives in one of the other two places.
  */
 function resolveBuyerAddress(invoice, bp) {
-  if (typeof invoice.Address === 'string' && invoice.Address.trim()) {
-    return invoice.Address.replace(/\r?\n/g, ', ').trim();
-  }
+  const documentAddress = cleanAddress(invoice.Address);
+  if (documentAddress) return documentAddress;
 
   const ext = invoice.AddressExtension;
   if (ext) {
@@ -667,7 +688,8 @@ function resolveBuyerAddress(invoice, bp) {
   }
 
   if (bp) {
-    if (typeof bp.Address === 'string' && bp.Address.trim()) return bp.Address.trim();
+    const bpAddress = cleanAddress(bp.Address);
+    if (bpAddress) return bpAddress;
 
     if (Array.isArray(bp.BPAddresses) && bp.BPAddresses.length) {
       const billTo =
@@ -682,9 +704,8 @@ function resolveBuyerAddress(invoice, bp) {
       if (composed) return composed;
     }
 
-    if (typeof bp.MailAddress === 'string' && bp.MailAddress.trim()) {
-      return bp.MailAddress.replace(/\r?\n/g, ', ').trim();
-    }
+    const mail = cleanAddress(bp.MailAddress);
+    if (mail) return mail;
   }
 
   return '';

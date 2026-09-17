@@ -396,6 +396,37 @@ test('a configured default unit unblocks items with nothing else set', () => {
 
 console.log('\nmapper — buyer address resolution');
 
+test('bare carriage returns in a SAP address are cleaned, not passed through', () => {
+  // Exactly as it comes back from this installation: CR without LF.
+  const inv = {
+    ...invoice,
+    Address: 'DOCKYARD ROAD WEST WHARF KARACHI PAKISTAN\r\r \rPAKISTAN',
+  };
+  const r = buildFbrPayload({ invoice: inv, businessPartner: bp, items, config });
+  assert.strictEqual(
+    r.payload.buyerAddress,
+    'DOCKYARD ROAD WEST WHARF KARACHI PAKISTAN, PAKISTAN'
+  );
+  assert.ok(!/[\r\n]/.test(r.payload.buyerAddress), 'no control characters may reach FBR');
+});
+
+test('an address of only whitespace and breaks counts as empty', () => {
+  const inv = { ...invoice, Address: '\r\n  \r ' };
+  const r = buildFbrPayload({ invoice: inv, businessPartner: bp, items, config });
+  assert.strictEqual(r.payload, null);
+  assert.ok(r.errors.some((e) => /Buyer address is empty/i.test(e)));
+});
+
+test('the line tax amount is read from TaxTotal', () => {
+  // This installation exposes the line tax as TaxTotal, not VatSum.
+  const inv = JSON.parse(JSON.stringify(invoice));
+  delete inv.DocumentLines[0].TaxPercentagePerRow;
+  inv.DocumentLines[0].TaxTotal = 180;
+  const r = buildFbrPayload({ invoice: inv, businessPartner: bp, items, config });
+  assert.strictEqual(r.payload.items[0].salesTaxApplicable, 180);
+  assert.strictEqual(r.payload.items[0].totalValues, 1180);
+});
+
 test('the address is found in AddressExtension when the document has none', () => {
   const inv = {
     ...invoice,
