@@ -386,6 +386,8 @@ function registerHandlers() {
 
   handle('sap:rawInvoice', async (docEntry) => sync.sapClient().getInvoice(docEntry));
 
+  handle('sap:rawItem', async (itemCode) => sync.sapClient().getItem(itemCode));
+
   handle('app:openDataDir', async () => {
     await shell.openPath(DATA_DIR);
     return DATA_DIR;

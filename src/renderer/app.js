@@ -936,6 +936,27 @@ $('btnRawInvoice').addEventListener('click', async () => {
   if (d) showTool(d);
 });
 
+$('btnRawItem').addEventListener('click', async () => {
+  const itemCode = $('diag_itemCode').value.trim();
+  if (!itemCode) return;
+  const d = await call(window.api.diagnostics.rawItem(itemCode), `Fetch item ${itemCode}`);
+  if (!d) return;
+  // Lead with the text-bearing fields, which is where an HS code would live.
+  const texty = Object.entries(d)
+    .filter(([k, v]) => typeof v === 'string' && v.trim() && k !== 'ItemName')
+    .map(([k, v]) => `  ${k.padEnd(28)} ${v}`);
+  const lines = [
+    `Text fields on ${itemCode} — the HS code should be in one of these:`,
+    '',
+    ...(texty.length ? texty : ['  (none)']),
+    '',
+    '---- full record ----',
+    '',
+    JSON.stringify(d, null, 2),
+  ];
+  showTool(lines.join('\n'));
+});
+
 $('btnClearLog').addEventListener('click', () => {
   $('logView').textContent = '';
 });

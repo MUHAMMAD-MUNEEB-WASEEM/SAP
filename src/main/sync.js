@@ -500,29 +500,45 @@ class SyncService {
     const sap = this.sapClient();
     const invoice = await sap.getInvoice(docEntry);
 
+    // Failures to LOAD master data are reported as their own errors. Left to
+    // the mapper they are indistinguishable from master data that loaded fine
+    // but is empty - which sends the user off editing an item that was never
+    // read in the first place.
+    const loadErrors = [];
+
     let businessPartner = null;
     try {
       businessPartner = await sap.getBusinessPartner(invoice.CardCode);
     } catch (err) {
+      loadErrors.push(
+        `Could not read business partner ${invoice.CardCode} from SAP: ${err.message}. Buyer details cannot be checked until this succeeds.`
+      );
       this.log(`Could not load business partner ${invoice.CardCode}: ${err.message}`);
     }
 
     const items = new Map();
     const codes = [
-      ...new Set(
-        (invoice.DocumentLines || []).map((l) => l.ItemCode).filter(Boolean)
-      ),
+      ...new Set((invoice.DocumentLines || []).map((l) => l.ItemCode).filter(Boolean)),
     ];
     for (const code of codes) {
       try {
         items.set(code, await sap.getItem(code));
       } catch (err) {
+        loadErrors.push(
+          `Could not read item ${code} from SAP: ${err.message}. Its HS code and unit cannot be read until this succeeds — this is a read failure, not missing master data.`
+        );
         this.log(`Could not load item ${code}: ${err.message}`);
       }
     }
 
     const result = buildFbrPayload({ invoice, businessPartner, items, config: cfg });
-    return { ...result, invoice, docEntry };
+    return {
+      ...result,
+      payload: loadErrors.length ? null : result.payload,
+      errors: [...loadErrors, ...result.errors],
+      invoice,
+      docEntry,
+    };
   }
 
   /** Dry-run against FBR's validate endpoint. Registers nothing. */

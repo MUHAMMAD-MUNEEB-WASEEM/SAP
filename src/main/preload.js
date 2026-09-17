@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   diagnostics: {
     metadata: () => invoke('sap:metadata'),
     rawInvoice: (docEntry) => invoke('sap:rawInvoice', docEntry),
+    rawItem: (itemCode) => invoke('sap:rawItem', itemCode),
   },
   app: {
     openDataDir: () => invoke('app:openDataDir'),

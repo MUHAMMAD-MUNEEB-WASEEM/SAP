@@ -396,9 +396,16 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
       [pick(line, [f.lineHsCodeField || 'U_FBR_HSCode'], null), 'the invoice line'],
       // Many sites keep the code in the item master's Remarks (OITM.UserText)
       // rather than a dedicated field, so it is consulted without configuration.
-      [pick(itemMaster, ['UserText'], null), 'the item Remarks'],
-      [map.defaultHsCode, 'the configured default'],
+      [pick(itemMaster, ['UserText', 'Remarks', 'User_Text'], null), 'the item Remarks'],
     ];
+
+    // Last resort before the blanket default: look across the item master's
+    // text-bearing fields for something shaped like an HS code. Only fields
+    // whose NAME plausibly holds one are considered, so an item code or a
+    // quantity can never be mistaken for a tariff classification.
+    const scanned = hsCandidates.some(([raw]) => raw) ? null : scanForHsCode(itemMaster);
+    if (scanned) hsCandidates.push([scanned.raw, `the item field ${scanned.field}`]);
+    hsCandidates.push([map.defaultHsCode, 'the configured default']);
 
     let hsCode = null;
     let hsFoundIn = null;
@@ -416,7 +423,11 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
     }
 
     if (hsCode) {
-      if (hsFoundIn === 'the item Remarks') remarksSourced.add(label);
+      // Anything other than a dedicated field is worth surfacing: the user
+      // should know which field their filings actually depend on.
+      if (hsFoundIn === 'the item Remarks' || String(hsFoundIn).startsWith('the item field')) {
+        remarksSourced.add(`${label} (from ${hsFoundIn})`);
+      }
     } else if (hsUnparsed) {
       noteMissing(
         unreadableHsCode,
@@ -516,11 +527,11 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
   }
   if (remarksSourced.size) {
     warnings.push(
-      `${remarksSourced.size} item(s) took their HS code from the item master's Remarks field: ${[
+      `${remarksSourced.size} item(s) took their HS code from a general-purpose field rather than a dedicated one: ${[
         ...remarksSourced,
       ]
         .slice(0, 8)
-        .join(', ')}${
+        .join('; ')}${
         remarksSourced.size > 8 ? ` and ${remarksSourced.size - 8} more` : ''
       }. That works, but a dedicated field is harder to disturb by accident.`
     );
@@ -573,6 +584,29 @@ function buildFbrPayload({ invoice, businessPartner, items = new Map(), config }
  * most a handful of item codes so one bad import does not produce an
  * unreadable wall of text.
  */
+/**
+ * Search an item master record for a value shaped like an HS code.
+ *
+ * A deliberate last resort for sites that keep the code in a field nobody
+ * documented. Only fields whose NAME plausibly holds one are considered, so an
+ * item code, a quantity or a price can never be mistaken for a tariff
+ * classification - and the caller reports which field it came from, so the
+ * guess is never silent.
+ */
+const HS_BEARING_FIELD = /^u_|user|remark|note|text|comment|hs|tariff|customs|code/i;
+
+function scanForHsCode(itemMaster) {
+  if (!itemMaster || typeof itemMaster !== 'object') return null;
+  for (const [field, value] of Object.entries(itemMaster)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    if (field === 'ItemCode' || field === 'ItemName') continue;
+    if (!HS_BEARING_FIELD.test(field)) continue;
+    const code = extractHsCode(value);
+    if (code) return { code, field, raw: value };
+  }
+  return null;
+}
+
 function truncateText(value, max) {
   const s = String(value).replace(/\s+/g, ' ').trim();
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;

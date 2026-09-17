@@ -359,6 +359,12 @@
             <button class="btn" id="btnMetadata">Download Service Layer $metadata</button>
             <label>Inspect raw invoice by DocEntry<input id="diag_docEntry" type="number" /></label>
             <button class="btn" id="btnRawInvoice">Fetch raw invoice JSON</button>
+            <label>Inspect item master by code<input id="diag_itemCode" placeholder="FGF-LBL-001" /></label>
+            <button class="btn btn-primary" id="btnRawItem">Fetch raw item JSON</button>
+            <p class="hint">
+              Shows every property SAP holds for that item, so the field actually carrying your HS
+              code can be identified rather than guessed at.
+            </p>
           </fieldset>
         </div>
         <h3>Output</h3>
