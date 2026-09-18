@@ -293,6 +293,11 @@ function registerHandlers() {
     })
   );
 
+  handle('invoices:findByIrn', async (irn) => {
+    log(`Looking up FBR number ${irn} in SAP…`);
+    return sync.findByIrn(irn);
+  });
+
   // -------------------------------------------------------- item mapping
   handle('items:list', async (opts) => sync.listItemsForMapping(opts || {}));
 
@@ -344,6 +349,19 @@ function registerHandlers() {
     const r = await sync.repairWriteBacks();
     log(`Write-back repair processed ${r.length} record(s).`);
     return r;
+  });
+
+  handle('qr:regenerate', async (filters) => {
+    log('Regenerating QR codes for registered invoices…');
+    return sync.regenerateQrCodes(filters || {});
+  });
+
+  handle('qr:pickFolder', async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose a folder for FBR QR images',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
   });
 
   handle('audit:orphans', async () => store.orphanedIrns());

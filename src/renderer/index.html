@@ -41,6 +41,7 @@
           </label>
           <button id="btnRefresh" class="btn btn-primary">Refresh</button>
           <input id="invoiceSearch" placeholder="Search doc no. or customer…" />
+          <button id="btnFindByIrn" class="btn">Find FBR no. in SAP</button>
           <span id="invoiceCount" class="muted"></span>
           <span class="spacer"></span>
           <button id="btnValidateSel" class="btn">Validate selected</button>
@@ -277,6 +278,28 @@
           </fieldset>
 
           <fieldset>
+            <legend>QR code for printed invoices</legend>
+            <p class="hint">
+              FBR requires every issued invoice to carry its logo and a QR code, version 2.0
+              (25&times;25) at 1&times;1 inch. A PNG is written per invoice and its path stored in
+              <code>U_FBR_QRPath</code> for the print layout to pick up.
+            </p>
+            <label class="check">
+              <input type="checkbox" id="qr_enabled" /> Generate a QR code on registration
+            </label>
+            <label>
+              Output folder
+              <input id="qr_folder" placeholder="a share the SAP report server can also reach" />
+            </label>
+            <button class="btn" id="btnPickQrFolder">Choose folder…</button>
+            <label>Resolution (DPI)<input id="qr_dpi" type="number" min="72" max="1200" /></label>
+            <button class="btn btn-accent" id="btnRegenerateQr">Regenerate QR codes</button>
+            <p class="hint">
+              Regenerate covers invoices registered before this existed, or where generation failed.
+            </p>
+          </fieldset>
+
+          <fieldset>
             <legend>Address defaults</legend>
             <p class="hint">
               FBR requires an address for both parties. These are used only when SAP has none —
@@ -332,6 +355,8 @@
       <section id="tab-audit" class="tabpanel">
         <div class="toolbar">
           <button id="btnLoadAudit" class="btn btn-primary">Reload</button>
+          <input id="auditSearch" placeholder="Filter by doc no., FBR no. or event…" />
+          <span id="auditCount" class="muted"></span>
           <button id="btnRepair" class="btn btn-accent">Repair pending write-backs</button>
           <button id="btnExportAudit" class="btn">Export log…</button>
           <button id="btnOpenData" class="btn btn-ghost">Open data folder</button>

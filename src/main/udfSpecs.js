@@ -59,6 +59,16 @@ const UDF_SPECS = [
   },
   {
     table: 'OINV',
+    configKey: 'qrPathField',
+    name: 'FBR_QRPath',
+    description: 'FBR QR Code Image Path',
+    type: 'db_Alpha',
+    size: 254,
+    required: false,
+    purpose: 'path to the printed QR image',
+  },
+  {
+    table: 'OINV',
     configKey: 'scenarioField',
     name: 'FBR_ScenarioId',
     description: 'FBR Scenario ID',

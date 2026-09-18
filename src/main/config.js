@@ -39,6 +39,7 @@ const DEFAULTS = {
     statusField: 'U_FBR_Status',
     dateField: 'U_FBR_Date',
     messageField: 'U_FBR_Message',
+    qrPathField: 'U_FBR_QRPath',
     // Read from the invoice (optional per-document overrides):
     invoiceTypeField: 'U_FBR_InvoiceType',
     scenarioField: 'U_FBR_ScenarioId',
@@ -78,6 +79,15 @@ const DEFAULTS = {
     rateDecimals: 0,
     provinces: {}, // SAP state code/name -> FBR province name
     uom: {},       // SAP UoM code -> FBR UoM name
+  },
+  qr: {
+    enabled: true,
+    // Where the PNGs are written. A share both this machine and the SAP
+    // report server can reach, since Crystal resolves the path at print time.
+    folder: '',
+    dpi: 300,
+    content: 'irn', // 'irn' | 'custom'
+    customText: '',
   },
   itemOverrides: {}, // ItemCode -> { hsCode, uoM, saleType, rate, ... }
   sync: {

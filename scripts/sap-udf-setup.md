@@ -109,3 +109,15 @@ Invoicing logo and a QR code:
 
 Add these to the Crystal Report / PLD invoice layout, encoding `U_FBR_IRN` in the
 QR code. That is a layout change inside SAP and is outside the scope of this app.
+
+---
+
+## Added later: QR code path
+
+| Field name | Description | Type | Length | Notes |
+|---|---|---|---|---|
+| `FBR_QRPath` | FBR QR Code Image Path | Alphanumeric | 254 | Full path to the generated QR PNG |
+
+Created automatically by **Tools → Create missing UDFs in SAP**. See
+[printed-invoice-setup.md](printed-invoice-setup.md) for putting it on the
+printed layout.

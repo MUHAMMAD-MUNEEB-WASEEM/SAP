@@ -254,6 +254,31 @@ class SapClient {
     return res.body;
   }
 
+  /**
+   * Find an invoice by the FBR number written back onto it.
+   *
+   * Queried server-side rather than filtered from a loaded page, so it finds
+   * the document whatever its date - the whole point of looking one up by IRN
+   * is that you do not know when it was raised.
+   */
+  async findInvoicesByIrn({ irnField, statusField, irn }) {
+    const select = [
+      'DocEntry', 'DocNum', 'DocDate', 'CardCode', 'CardName',
+      'DocTotal', 'VatSum', 'DocCurrency', 'Cancelled',
+      irnField, statusField,
+    ].filter(Boolean).join(',');
+
+    const value = String(irn).replace(/'/g, "''");
+    const filter = `${irnField} eq '${value}'`;
+    const qs =
+      `?$select=${encodeURIComponent(select)}&$filter=${encodeURIComponent(filter)}`;
+
+    const res = await this.withSession('GET', `/Invoices${qs}`, undefined, {
+      Prefer: 'odata.maxpagesize=20',
+    });
+    return (res.body && res.body.value) || [];
+  }
+
   /** Full invoice including DocumentLines. */
   async getInvoice(docEntry) {
     const res = await this.withSession('GET', `/Invoices(${Number(docEntry)})`);

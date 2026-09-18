@@ -3,3 +3,5 @@ config/config.json
 data/
 *.log
 dist/
+out.txt
+err.txt

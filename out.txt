@@ -1,2 +1,0 @@
-
-[2026-09-17T23:06:10.385Z] Started. FBR environment: sandbox. SAP: https://10.0.1.55:50000

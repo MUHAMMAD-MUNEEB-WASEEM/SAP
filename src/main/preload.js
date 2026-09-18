@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
     validate: (docEntry) => invoke('invoices:validate', docEntry),
     submit: (docEntry, opts) => invoke('invoices:submit', docEntry, opts),
     submitMany: (docEntries) => invoke('invoices:submitMany', docEntries),
+    findByIrn: (irn) => invoke('invoices:findByIrn', irn),
   },
   items: {
     list: (opts) => invoke('items:list', opts),
@@ -36,6 +37,10 @@ contextBridge.exposeInMainWorld('api', {
     matchUnits: (payload) => invoke('items:matchUnits', payload),
     exportCsv: (rows) => invoke('items:exportCsv', rows),
     importCsv: () => invoke('items:importCsv'),
+  },
+  qr: {
+    regenerate: (filters) => invoke('qr:regenerate', filters),
+    pickFolder: () => invoke('qr:pickFolder'),
   },
   repair: {
     writeBacks: () => invoke('repair:writeBacks'),

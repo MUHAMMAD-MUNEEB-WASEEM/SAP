@@ -31,7 +31,9 @@ const elements = new Map();
 function makeElement(id) {
   const el = {
     id,
-    value: '',
+    // Non-empty so guards like `if (!value) return` do not short-circuit
+    // the handler before it exercises anything.
+    value: '9075',
     checked: false,
     textContent: '',
     innerHTML: '',
@@ -144,6 +146,7 @@ const api = {
     validate: () => wrap({ ok: false, stage: 'mapping', errors: ['x'], warnings: [], payload: null }),
     submit: () => wrap({ ok: true, stage: 'done', invoiceNumber: 'ABC123', writtenBack: true, warnings: [], errors: [] }),
     submitMany: () => wrap([{ docEntry: 9075, ok: true, invoiceNumber: 'ABC123' }]),
+    findByIrn: () => wrap({ irn: 'ABC123', inSap: [{ docEntry: 9075, docNum: 9075, docDate: '2026-09-01', cardName: 'X', docTotal: 1, irn: 'ABC123', status: 'Valid' }], inLog: [] }),
   },
   items: {
     list: () => wrap(sampleItems),
@@ -153,6 +156,10 @@ const api = {
     exportCsv: () => wrap('C:/tmp/x.csv'),
     importCsv: () => wrap([{ itemCode: 'FGF-LBL-001', hsCode: '4821.1000', uoM: '', saleType: '' }]),
   },
+  qr: {
+    regenerate: () => wrap({ attempted: 2, written: 2, failed: 0, results: [{ docNum: 9075, ok: true, path: 'C:/qr/9075.png' }] }),
+    pickFolder: () => wrap('C:/qr'),
+  },
   repair: { writeBacks: () => wrap([{ docEntry: 1, ok: true }]) },
   audit: {
     orphans: () => wrap([]),
@@ -160,6 +167,8 @@ const api = {
     recent: () => wrap([{ ts: '2026-09-18T00:00:00Z', event: 'posted', docNum: 1, environment: 'sandbox', invoiceNumber: 'A1', writtenBack: true }]),
   },
   fbr: {
+    ratesForSaleType: () =>
+      wrap({ ok: true, saleType: 'Goods at standard rate (default)', transTypeId: 18, province: 'Sindh', provinceId: 8, date: '13-Jun-2026', rates: [{ id: 734, desc: '18%', value: 18 }] }),
     reference: (kind) =>
       wrap(
         kind === 'uom'
@@ -205,6 +214,33 @@ const sandbox = {
 };
 sandbox.globalThis = sandbox;
 sandbox.window.document = document;
+
+// Self-policing: the mock must expose everything preload does. Without this a
+// newly added API silently goes untested, which is exactly how two gaps here
+// survived several runs.
+const preloadSource = fs.readFileSync(path.join(ROOT, 'src', 'main', 'preload.js'), 'utf8');
+
+console.log('\nrenderer — mock covers the real API');
+{
+  const exposed = [];
+  for (const group of preloadSource.matchAll(/^ {2}(\w+):\s*\{([\s\S]*?)^ {2}\},/gm)) {
+    for (const fn of group[2].matchAll(/^ {4}(\w+):/gm)) {
+      exposed.push(`${group[1]}.${fn[1]}`);
+    }
+  }
+  const missing = exposed.filter((key) => {
+    const [group, fn] = key.split('.');
+    return !api[group] || typeof api[group][fn] !== 'function';
+  });
+  if (missing.length) {
+    for (const key of missing) {
+      console.log(`  BUG   window.api.${key} is exposed by preload but absent from this mock`);
+      failures.push(`mock missing: ${key}`);
+    }
+  } else {
+    console.log(`  ok    mock implements all ${exposed.length} exposed API functions`);
+  }
+}
 
 console.log('\nrenderer — load');
 try {

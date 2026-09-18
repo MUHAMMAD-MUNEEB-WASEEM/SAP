@@ -139,6 +139,11 @@ function fillForm(config_) {
   $('map_defaultHsCode').value = mapping.defaultHsCode || '';
   $('map_rateOverride').value = mapping.rateOverride || '';
 
+  const qr = c.qr || {};
+  $('qr_enabled').checked = qr.enabled !== false;
+  $('qr_folder').value = qr.folder || '';
+  $('qr_dpi').value = qr.dpi || 300;
+
   $('sync_validateBeforePost').checked = sync.validateBeforePost !== false;
   $('sync_autoWriteBack').checked = sync.autoWriteBack !== false;
   $('sync_lookbackDays').value = sync.lookbackDays || 30;
@@ -202,6 +207,11 @@ function readForm() {
       autoWriteBack: $('sync_autoWriteBack').checked,
       lookbackDays: Number($('sync_lookbackDays').value) || 30,
     },
+    qr: {
+      enabled: $('qr_enabled').checked,
+      folder: $('qr_folder').value.trim(),
+      dpi: Number($('qr_dpi').value) || 300,
+    },
     sapFields,
   };
 }
@@ -222,6 +232,32 @@ $('btnLoadUomsSettings').addEventListener('click', async () => {
   showAlert(
     `<strong>${options.length} FBR unit(s) loaded.</strong> The Default unit of measure box now autocompletes.`,
     'ok'
+  );
+});
+
+$('btnPickQrFolder').addEventListener('click', async () => {
+  const folder = await call(window.api.qr.pickFolder(), 'Choose QR folder');
+  if (folder) $('qr_folder').value = folder;
+});
+
+$('btnRegenerateQr').addEventListener('click', async () => {
+  if (!$('qr_folder').value.trim()) {
+    return showAlert('Set a QR output folder first, then Save settings.');
+  }
+  const r = await call(
+    window.api.qr.regenerate({
+      fromDate: $('fromDate').value || undefined,
+      toDate: $('toDate').value || undefined,
+    }),
+    'Regenerate QR codes'
+  );
+  if (!r) return;
+  const failed = r.results.filter((x) => !x.ok);
+  showAlert(
+    `<strong>${r.written} QR code(s) written${r.failed ? `, ${r.failed} failed` : ''}.</strong>${
+      failed.length ? ' ' + esc(failed.slice(0, 3).map((x) => `${x.docNum}: ${x.error}`).join('; ')) : ''
+    }`,
+    r.failed ? 'error' : 'ok'
   );
 });
 
@@ -369,6 +405,38 @@ function renderInvoices() {
 // and does not re-query SAP on every keystroke.
 $('invoiceSearch').addEventListener('input', renderInvoices);
 
+// Searching the loaded page only finds what the date filter happened to pull
+// in. Looking up an FBR number queries SAP directly, which is the point: you
+// rarely know the date of the invoice you are chasing.
+$('btnFindByIrn').addEventListener('click', async () => {
+  const irn = $('invoiceSearch').value.trim();
+  if (!irn) return showAlert('Type an FBR invoice number in the search box first.');
+
+  const r = await call(window.api.invoices.findByIrn(irn), `Find FBR number ${irn}`);
+  if (!r) return;
+
+  if (!r.inSap.length) {
+    const logged = r.inLog.length
+      ? ` It IS in this app's submission log (${r.inLog.length} record(s)), which means FBR issued it but SAP never received it — use Audit log → Repair pending write-backs.`
+      : ' It is not in this app\'s submission log either, so it was probably filed by something else.';
+    return showAlert(
+      `<strong>No SAP invoice carries FBR number ${esc(irn)}.</strong>${esc(logged)}`,
+      r.inLog.length ? 'error' : 'warn'
+    );
+  }
+
+  // Show them in the grid so the normal actions still apply.
+  invoices = r.inSap.map((x) => ({ ...x, localStatus: null, localIrn: x.irn, needsWriteBack: false }));
+  $('invoiceSearch').value = '';
+  renderInvoices();
+  showAlert(
+    `<strong>Found ${r.inSap.length} SAP invoice(s) with FBR number ${esc(irn)}.</strong> Doc no. ${esc(
+      r.inSap.map((x) => x.docNum).join(', ')
+    )}.`,
+    'ok'
+  );
+});
+
 $('selectAll').addEventListener('change', (e) => {
   document.querySelectorAll('.rowcheck:not(:disabled)').forEach((c) => {
     c.checked = e.target.checked;
@@ -432,8 +500,14 @@ async function submitInvoice(docEntry) {
     `Invoice ${docEntry} — registration result`,
     `<div class="alert ${r.ok ? 'ok' : 'err'}">${
       r.ok
-        ? `Registered. FBR invoice number <strong class="mono">${esc(r.invoiceNumber)}</strong>${
-            r.writtenBack ? ' and written back to SAP.' : ' — write-back pending.'
+        ? `Registered in <strong>${esc(
+            (config && config.fbr.environment) || 'sandbox'
+          ).toUpperCase()}</strong>. FBR invoice number <strong class="mono">${esc(
+            r.invoiceNumber
+          )}</strong>${r.writtenBack ? ' and written back to SAP.' : ' — write-back pending.'}${
+            (config && config.fbr.environment) === 'production'
+              ? ''
+              : '<br><br>This is a <strong>test filing</strong>. It exists only in FBR\'s sandbox and will NOT appear in the production IRIS portal, on your sales tax return, or anywhere a real filing would.'
           }`
         : `Not registered (stage “${esc(r.stage)}”).${
             r.indeterminate
@@ -837,9 +911,33 @@ async function loadAudit() {
   }
   $('auditAlerts').innerHTML = alerts.join('');
 
+  auditRecords = records || [];
+  renderAudit();
+}
+
+let auditRecords = [];
+
+function renderAudit() {
   const body = $('auditBody');
-  if (!records || !records.length) {
-    body.innerHTML = '<tr class="empty"><td colspan="6">No submissions recorded yet.</td></tr>';
+  const needle = $('auditSearch').value.trim().toLowerCase();
+  const records = needle
+    ? auditRecords.filter((r) =>
+        [r.docNum, r.docEntry, r.invoiceNumber, r.event, r.environment].some(
+          (v) => v != null && String(v).toLowerCase().includes(needle)
+        )
+      )
+    : auditRecords;
+
+  $('auditCount').textContent = auditRecords.length
+    ? records.length === auditRecords.length
+      ? `${auditRecords.length} record${auditRecords.length === 1 ? '' : 's'}`
+      : `${records.length} of ${auditRecords.length}`
+    : '';
+
+  if (!records.length) {
+    body.innerHTML = `<tr class="empty"><td colspan="6">${
+      auditRecords.length ? 'No records match that filter.' : 'No submissions recorded yet.'
+    }</td></tr>`;
     return;
   }
   body.innerHTML = records
@@ -860,6 +958,7 @@ async function loadAudit() {
 }
 
 $('btnLoadAudit').addEventListener('click', loadAudit);
+$('auditSearch').addEventListener('input', renderAudit);
 
 $('btnRepair').addEventListener('click', async () => {
   const r = await call(window.api.repair.writeBacks(), 'Repair write-backs');

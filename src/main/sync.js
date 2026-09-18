@@ -17,6 +17,7 @@ const { SapClient } = require('./sapClient');
 const { FbrClient } = require('./fbrClient');
 const { buildFbrPayload, extractHsCode, normaliseProvince } = require('./mapper');
 const { tableGroups } = require('./udfSpecs');
+const { writeInvoiceQr } = require('./qr');
 
 class SyncService {
   constructor({ configStore, store, log }) {
@@ -339,6 +340,44 @@ class SyncService {
     }));
 
     return { ok: true, saleType, transTypeId, province, provinceId, date, rates };
+  }
+
+  /**
+   * Look an invoice up in SAP by its FBR number, ignoring the date filter.
+   * Also reports what the local audit log knows, which can differ from SAP if
+   * a write-back failed.
+   */
+  async findByIrn(irn) {
+    const f = this.config().sapFields;
+    const term = String(irn || '').trim();
+    if (!term) return { irn: term, inSap: [], inLog: [] };
+
+    const rows = await this.sapClient().findInvoicesByIrn({
+      irnField: f.irnField,
+      statusField: f.statusField,
+      irn: term,
+    });
+
+    const inLog = this.store
+      .all()
+      .filter((r) => r.invoiceNumber && String(r.invoiceNumber).trim() === term);
+
+    return {
+      irn: term,
+      inSap: rows.map((r) => ({
+        docEntry: r.DocEntry,
+        docNum: r.DocNum,
+        docDate: r.DocDate,
+        cardCode: r.CardCode,
+        cardName: r.CardName,
+        docTotal: r.DocTotal,
+        currency: r.DocCurrency,
+        cancelled: r.Cancelled,
+        irn: r[f.irnField] || null,
+        status: r[f.statusField] || null,
+      })),
+      inLog,
+    };
   }
 
   // -------------------------------------------------------- item mapping
@@ -853,16 +892,41 @@ class SyncService {
       payload,
     });
 
-    // 6. Write back to SAP.
+    // 6. Produce the QR code the printed invoice must carry (spec section 6).
+    //    Done before the write-back so its path can go into the same PATCH,
+    //    and treated as non-fatal: the filing exists either way, and a missing
+    //    image is a printing problem rather than a compliance one.
+    let qrResult = null;
+    let qrError = null;
+    if (cfg.qr && cfg.qr.enabled !== false && cfg.qr.folder) {
+      try {
+        qrResult = await writeInvoiceQr({
+          text: cfg.qr.content === 'custom' && cfg.qr.customText
+            ? cfg.qr.customText.replace('{irn}', res.invoiceNumber)
+            : res.invoiceNumber,
+          folder: cfg.qr.folder,
+          fileName: `${fresh.DocNum || docEntry}`,
+          dpi: cfg.qr.dpi,
+        });
+        this.log(`QR code written to ${qrResult.path}`);
+      } catch (err) {
+        qrError = err.message;
+        this.log(`QR generation failed for DocEntry ${docEntry}: ${err.message}`);
+      }
+    }
+
+    // 7. Write back to SAP.
     let writeBackError = null;
     if (cfg.sync.autoWriteBack) {
       try {
-        await sap.patchInvoice(docEntry, {
+        const patch = {
           [f.irnField]: res.invoiceNumber,
           [f.statusField]: 'Valid',
           [f.dateField]: res.dated ? res.dated.slice(0, 10) : new Date().toISOString().slice(0, 10),
           [f.messageField]: '',
-        });
+        };
+        if (qrResult && f.qrPathField) patch[f.qrPathField] = qrResult.path;
+        await sap.patchInvoice(docEntry, patch);
         this.store.append({ ...record, event: 'posted', writtenBack: true });
       } catch (err) {
         writeBackError = err.message;
@@ -880,7 +944,13 @@ class SyncService {
               `FBR accepted the invoice as ${res.invoiceNumber}, but writing it back to SAP failed: ${writeBackError}. The number is saved in the local log — use "Repair write-back" once SAP is reachable.`,
             ]
           : []),
+        ...(qrError
+          ? [
+              `The invoice is registered, but its QR code could not be written: ${qrError}. The printed invoice must carry one — fix the output folder and use "Regenerate QR codes".`,
+            ]
+          : []),
       ],
+      qrPath: qrResult ? qrResult.path : null,
       invoiceNumber: res.invoiceNumber,
       dated: res.dated,
       writtenBack: !writeBackError && cfg.sync.autoWriteBack,
@@ -898,6 +968,48 @@ class SyncService {
       this.log(`Status write-back failed for DocEntry ${docEntry}: ${err.message}`);
       return false;
     }
+  }
+
+  /**
+   * Produce QR codes for invoices that already carry an FBR number.
+   *
+   * Needed for anything registered before QR generation existed, and as the
+   * recovery path when generation failed at submission time.
+   */
+  async regenerateQrCodes({ fromDate, toDate } = {}) {
+    const cfg = this.config();
+    const f = cfg.sapFields;
+    if (!cfg.qr || !cfg.qr.folder) {
+      throw new Error('No QR output folder configured (Settings -> QR code).');
+    }
+
+    const { invoices } = await this.listPending({ fromDate, toDate, includeRegistered: true });
+    const registered = invoices.filter((i) => i.irn);
+    const results = [];
+
+    for (const inv of registered) {
+      try {
+        const qr = await writeInvoiceQr({
+          text:
+            cfg.qr.content === 'custom' && cfg.qr.customText
+              ? cfg.qr.customText.replace('{irn}', inv.irn)
+              : inv.irn,
+          folder: cfg.qr.folder,
+          fileName: `${inv.docNum || inv.docEntry}`,
+          dpi: cfg.qr.dpi,
+        });
+        if (f.qrPathField) {
+          await this.sapClient().patchInvoice(inv.docEntry, { [f.qrPathField]: qr.path });
+        }
+        results.push({ docNum: inv.docNum, ok: true, path: qr.path });
+      } catch (err) {
+        results.push({ docNum: inv.docNum, ok: false, error: err.message });
+      }
+    }
+
+    const done = results.filter((r) => r.ok).length;
+    this.log(`QR regeneration: ${done}/${results.length} written.`);
+    return { attempted: results.length, written: done, failed: results.length - done, results };
   }
 
   /** Re-apply IRNs that FBR issued but SAP never received. */
