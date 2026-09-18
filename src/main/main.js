@@ -14,6 +14,7 @@ const { ConfigStore } = require('./config');
 const { Store } = require('./store');
 const { SyncService } = require('./sync');
 const { matchUom } = require('./mapper');
+const { toDataUrl: qrDataUrl } = require('./qr');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const CONFIG_PATH = path.join(PROJECT_ROOT, 'config', 'config.json');
@@ -349,6 +350,15 @@ function registerHandlers() {
     const r = await sync.repairWriteBacks();
     log(`Write-back repair processed ${r.length} record(s).`);
     return r;
+  });
+
+  handle('qr:dataUrls', async ({ values, px } = {}) => {
+    const out = {};
+    for (const v of values || []) {
+      if (!v) continue;
+      out[v] = await qrDataUrl(v, px || 96);
+    }
+    return out;
   });
 
   handle('qr:regenerate', async (filters) => {

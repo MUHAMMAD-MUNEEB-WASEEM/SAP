@@ -159,6 +159,8 @@ const api = {
   qr: {
     regenerate: () => wrap({ attempted: 2, written: 2, failed: 0, results: [{ docNum: 9075, ok: true, path: 'C:/qr/9075.png' }] }),
     pickFolder: () => wrap('C:/qr'),
+    dataUrls: ({ values }) =>
+      wrap(Object.fromEntries((values || []).map((v) => [v, 'data:image/png;base64,iVBORw0KGgo=']))),
   },
   repair: { writeBacks: () => wrap([{ docEntry: 1, ok: true }]) },
   audit: {

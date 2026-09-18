@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('api', {
   qr: {
     regenerate: (filters) => invoke('qr:regenerate', filters),
     pickFolder: () => invoke('qr:pickFolder'),
+    dataUrls: (payload) => invoke('qr:dataUrls', payload),
   },
   repair: {
     writeBacks: () => invoke('repair:writeBacks'),

@@ -391,6 +391,11 @@ function renderInvoices() {
         <td class="num">${money(inv.vatSum)}</td>
         <td>${pill}</td>
         <td class="mono">${esc(irn || '—')}</td>
+        <td class="col-qr">${
+          irn
+            ? `<img class="qr-thumb" data-irn="${esc(irn)}" alt="QR code for ${esc(irn)}" title="Click to enlarge" />`
+            : '<span class="muted">—</span>'
+        }</td>
         <td>
           <button class="btn btn-sm act-preview" data-doc="${inv.docEntry}">Preview</button>
           <button class="btn btn-sm act-validate" data-doc="${inv.docEntry}">Validate</button>
@@ -399,10 +404,48 @@ function renderInvoices() {
       </tr>`;
     })
     .join('');
+
+  // Images are filled after the markup exists; failures here must never stop
+  // the table being usable, so it is fire-and-forget.
+  fillInvoiceQrThumbnails().catch(() => {});
 }
 
 // Filtering is client-side over what Refresh already loaded, so it is instant
 // and does not re-query SAP on every keystroke.
+/** QR images are fetched once per IRN and reused across re-renders. */
+const qrCache = new Map();
+
+async function fillInvoiceQrThumbnails() {
+  const imgs = [...document.querySelectorAll('img.qr-thumb')];
+  if (!imgs.length) return;
+
+  const wanted = [...new Set(imgs.map((i) => i.dataset.irn).filter((v) => v && !qrCache.has(v)))];
+  if (wanted.length) {
+    const res = await window.api.qr.dataUrls({ values: wanted, px: 96 });
+    if (res && res.ok) {
+      for (const [irn, url] of Object.entries(res.data || {})) qrCache.set(irn, url);
+    }
+  }
+  for (const img of imgs) {
+    const url = qrCache.get(img.dataset.irn);
+    if (url) img.src = url;
+  }
+}
+
+// Clicking a thumbnail opens it big enough to scan off the screen.
+$('invoiceBody').addEventListener('click', (e) => {
+  const img = e.target.closest('img.qr-thumb');
+  if (!img) return;
+  const irn = img.dataset.irn;
+  openDrawer(
+    'FBR QR code',
+    `<p class="muted">Scanning this returns the FBR invoice number below. The printed invoice must carry the same code at 1 &times; 1 inch, alongside the FBR Digital Invoicing logo.</p>
+     <div class="qr-large"><img src="${esc(qrCache.get(irn) || '')}" alt="QR code" /></div>
+     <h4>Encoded value</h4>
+     <pre class="output">${esc(irn)}</pre>`
+  );
+});
+
 $('invoiceSearch').addEventListener('input', renderInvoices);
 
 // Searching the loaded page only finds what the date filter happened to pull

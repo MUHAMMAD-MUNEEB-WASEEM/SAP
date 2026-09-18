@@ -64,6 +64,32 @@ async function writeInvoiceQr({ text, folder, fileName, dpi = DEFAULT_DPI }) {
 }
 
 /**
+ * Render a QR as a data URI for display in the app.
+ *
+ * Derived straight from the text, with no filesystem involved: the on-screen
+ * code is for eyeballing and scanning, and should work whether or not the
+ * print-time PNG has been written yet. The page's CSP permits `data:` images.
+ *
+ * @param {string} text
+ * @param {number} [px] rendered size; small for a table thumbnail
+ * @returns {Promise<string|null>} null when the text cannot be encoded
+ */
+async function toDataUrl(text, px = 96) {
+  if (!text) return null;
+  try {
+    return await QRCode.toDataURL(String(text), {
+      version: QR_VERSION,
+      errorCorrectionLevel: 'M',
+      width: px,
+      margin: 2,
+      color: { dark: '#000000ff', light: '#ffffffff' },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check a value will fit the mandated symbol before trying to write it, so an
  * over-long content string is reported clearly rather than as a library error.
  */
@@ -80,4 +106,4 @@ async function canEncode(text) {
   }
 }
 
-module.exports = { writeInvoiceQr, canEncode, QR_VERSION, DEFAULT_DPI };
+module.exports = { writeInvoiceQr, toDataUrl, canEncode, QR_VERSION, DEFAULT_DPI };
